@@ -1,5 +1,10 @@
 # Build your first RAG agent: a study assistant for your Canvas courses
 
+> **You are on the `solutions` branch.** Tasks 1, 2 and 3 are already built here, each marked
+> `SOLUTION`. Task 1's change is the last bullet under "How to answer:" in
+> `src/academic_rag/agent/system_prompt.md`. See everything that changed with
+> `git diff main solutions -- src/`, and go back to the starting point with `git switch main`.
+
 This project turns your own Canvas courses into an AI study assistant. It downloads your course
 material, makes it searchable on your own computer, and lets an AI answer questions about your
 classes, citing where each fact came from.

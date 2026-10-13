@@ -15,10 +15,11 @@ from .. import course_files
 from ..config import Settings
 from ..index import Embedder, VectorStore
 from .course import FIND_TEXT, READ_DOCUMENT, SEARCH_COURSE
+from .grades import GRADES
 from .tool import Tool
 
 # The tools every question gets. TASK 2: add GRADES (from grades.py) to this list.
-TOOLS: list[Tool] = [SEARCH_COURSE, FIND_TEXT, READ_DOCUMENT]
+TOOLS: list[Tool] = [SEARCH_COURSE, FIND_TEXT, READ_DOCUMENT, GRADES]  # SOLUTION: GRADES added
 
 RESULT_PREVIEW = 1500  # characters of each result kept for "Behind the answer"
 

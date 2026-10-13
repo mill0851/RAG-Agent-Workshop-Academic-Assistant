@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 
 from .embed import Embedder
@@ -69,12 +70,26 @@ def boost_exact_matches(query: str, passages: list[Passage]) -> list[Passage]:
     codes and numbers (HW 2, CHEM 2053, Quiz 1, 11.3) come first. Among passages that
     match equally, keep the vector order. Never drop a passage.
 
-    Right now it changes nothing.
+    SOLUTION: find the exact terms, count whole-term matches per passage, and sort by
+    that count (sorted() is stable, so ties keep the vector order).
     """
-    # TODO 1: find the exact terms in the query, e.g. "hw 2", "chem 2053", "homework 11.3"
-    # TODO 2: count how many of the terms each passage contains (title + text, whole terms only)
-    # TODO 3: return the passages sorted by that count, highest first
-    return passages
+    # SOLUTION
+    # 1. the exact terms: a number, plus the word before it ("hw 2", "chem 2053", "homework 11.3")
+    terms = {m.group(0) for m in _EXACT_TERM.finditer(query.lower())}
+    if not terms:
+        return passages
+    patterns = [re.compile(rf"\b{re.escape(t)}\b") for t in terms]
+
+    # 2. how many of the terms a passage contains, as whole terms, in its title or text
+    def matches(p: Passage) -> int:
+        text = " ".join(f"{p.title} {p.text}".lower().split())  # lowercase, spaces collapsed
+        return sum(1 for pattern in patterns if pattern.search(text))
+
+    # 3. most matches first; sorted() is stable, so ties keep the vector order
+    return sorted(passages, key=matches, reverse=True)
+
+
+_EXACT_TERM = re.compile(r"(?:[a-z]+ )?\d+(?:\.\d+)*[a-z]?")
 
 
 def _passage(h: Hit) -> Passage:
