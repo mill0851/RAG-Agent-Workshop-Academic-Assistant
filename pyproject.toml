@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academic-rag"
+version = "0.1.0"
+description = "RAG academic assistant over Canvas LMS course materials"
+requires-python = ">=3.11,<3.15"  # onnxruntime (used by chromadb) has no wheels for 3.15 yet
+dependencies = [
+  "httpx>=0.27",
+  "beautifulsoup4>=4.12",
+  "pypdf>=4.0",
+  "python-docx>=1.1",
+  "python-pptx>=1.0",
+  "chromadb>=1.0",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "python-multipart>=0.0.9",
+  "python-dotenv>=1.0",
+  "tzdata>=2024.1",  # time zone names on Windows, which has no built-in database
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "respx>=0.21"]
+
+[project.scripts]
+acad = "academic_rag.serve.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"academic_rag.serve" = ["static/*"]
+"academic_rag.agent" = ["system_prompt.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/tasks/ holds the workshop tasks, which fail until you build them.
+# `pytest` skips them; run one by name: pytest tests/tasks/test_task1_system_prompt.py
+norecursedirs = ["tasks", ".*", "*.egg", "build", "dist", "venv", "node_modules"]

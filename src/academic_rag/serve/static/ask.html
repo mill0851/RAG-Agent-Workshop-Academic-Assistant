@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ask · Academic Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Answers are Markdown with math. Without internet they still show, as plain text. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/contrib/auto-render.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <strong>Academic Assistant</strong>
+    <nav><a href="index.html">Courses</a><a href="search.html">Search</a><a href="ask.html" class="active">Ask</a></nav>
+  </header>
+
+  <main>
+    <section class="bar">
+      <select id="course"><option value="">All courses</option></select>
+      <select id="model" title="Which AI writes the answers"></select>
+      <select id="effort" title="How hard the AI thinks before answering: High is slower, for harder questions" hidden></select>
+      <button id="new" class="secondary">New conversation</button>
+    </section>
+    <p id="notice" class="muted"></p>
+
+    <div id="log" class="log"></div>
+
+    <form id="form" class="composer">
+      <textarea name="q" rows="2" placeholder="Ask about your courses… (Enter to send, Shift+Enter for a new line)" required></textarea>
+      <button>Send</button>
+    </form>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const form = $("form");
+    const params = new URLSearchParams(location.search);
+    let history = [];  // [{role: "student" | "assistant", text}], sent with every question
+    let replies = 0;
+
+    // Course list: GET /courses. The last course you picked is remembered in this browser.
+    api("/courses").then((courses) => {
+      for (const c of courses) $("course").add(new Option(c.name, c.id));
+      try { $("course").value = localStorage.getItem("ask-course") ?? ""; } catch {}
+      if ($("course").selectedIndex < 0) $("course").value = "";
+    });
+    $("course").addEventListener("change", () => {
+      try { localStorage.setItem("ask-course", $("course").value); } catch {}
+    });
+
+    // Which AI answers: GET /models lists every choice, whether it works on this computer, and
+    // the effort levels it accepts. The default comes from .env; choices made here are remembered.
+    const efforts = {};  // "provider|model" -> ["medium", "high"]
+    api("/models").then(({ default: preset, choices }) => {
+      const groups = {};
+      for (const c of choices) {
+        efforts[`${c.provider}|${c.model}`] = c.efforts ?? [];
+        const group = groups[c.provider] ??= $("model").appendChild(document.createElement("optgroup"));
+        group.label = c.provider[0].toUpperCase() + c.provider.slice(1);
+        const option = new Option(c.available ? c.label : `${c.label} (${c.problem})`, `${c.provider}|${c.model}`);
+        option.disabled = !c.available;
+        group.append(option);
+      }
+      const usable = choices.filter((c) => c.available).map((c) => `${c.provider}|${c.model}`);
+      const wanted = [remembered(), `${preset.provider}|${preset.model}`, `${preset.provider}|`];
+      $("model").value = wanted.find((v) => usable.includes(v)) ?? usable[0] ?? "";
+      $("notice").textContent = usable.length
+        ? "The AI you pick answers from your course material, and looks up more when it needs to."
+        : "No AI is available yet: set LLM_PROVIDER in .env (see .env.example), then restart acad serve.";
+      showEfforts();
+    });
+    $("model").addEventListener("change", () => {
+      try { localStorage.setItem("ask-model", $("model").value); } catch {}
+      showEfforts();
+    });
+    $("effort").addEventListener("change", () => {
+      try { localStorage.setItem("ask-effort", $("effort").value); } catch {}
+    });
+    function remembered(key = "ask-model") {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+    // The Effort menu offers the levels the chosen model accepts (hidden if it lists none)
+    function showEfforts() {
+      const levels = efforts[$("model").value] ?? [];
+      $("effort").replaceChildren(...levels.map((e) => new Option(`${e[0].toUpperCase()}${e.slice(1)} effort`, e)));
+      $("effort").hidden = !levels.length;
+      const wanted = remembered("ask-effort");
+      if (levels.includes(wanted)) $("effort").value = wanted;
+    }
+
+    $("new").addEventListener("click", () => {
+      history = [];
+      $("log").innerHTML = "";
+      form.q.focus();
+    });
+
+    form.q.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = form.q.value.trim();
+      if (!question) return;
+      form.q.value = "";
+      send(question);
+    });
+
+    // ask.html?q=when%20is%20the%20midterm asks straight away (handy for demos)
+    if (params.get("q")) window.addEventListener("load", () => send(params.get("q")));
+
+    // Clicking a citation like [2] opens the sources under that answer
+    $("log").addEventListener("click", (event) => {
+      if (event.target.classList.contains("cite")) event.target.closest(".msg").querySelector(".sources").open = true;
+    });
+
+    // POST /ask: the answer streams back as JSON lines: sources, tool calls, text, a trace, done
+    async function send(question) {
+      addMessage("student", esc(question));
+      const id = `r${++replies}`;
+      const reply = addMessage("assistant", '<ul class="steps muted"></ul><div class="text muted">Thinking…</div>');
+      const textEl = reply.querySelector(".text");
+      const step = (html) => reply.querySelector(".steps").insertAdjacentHTML("beforeend", `<li>${html}</li>`);
+      form.querySelector("button").disabled = true;
+
+      const body = { question, history };
+      if ($("course").value) body.course = $("course").value;
+      if ($("model").value) [body.provider, body.model] = $("model").value.split("|");
+      if (!$("effort").hidden) body.effort = $("effort").value;
+      let answer = "";
+      try {
+        const res = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(typeof err.detail === "string" ? err.detail : `${res.status} ${res.statusText}`);
+        }
+        for await (const event of jsonLines(res)) {
+          if (event.type === "sources") {
+            showSources(reply, id, event);
+          } else if (event.type === "tool") {  // the AI looked something up
+            step(`<code>${esc(event.name)}</code> ${esc(Object.values(event.args).join(" · "))}`);
+          } else if (event.type === "note") {  // it said what it is doing
+            step(`<em>${esc(event.text)}</em>`);
+          } else if (event.type === "text") {
+            answer += event.text;
+            textEl.classList.remove("muted");
+            showAnswer(textEl, answer, id);
+          } else if (event.type === "trace") {
+            showTrace(reply, event);
+          } else if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
+        history.push({ role: "student", text: question }, { role: "assistant", text: answer });
+      } catch (err) {
+        textEl.classList.remove("muted");
+        textEl.innerHTML = `<span class="error">${esc(err.message)}</span>`;
+      }
+      form.querySelector("button").disabled = false;
+      form.q.focus();
+    }
+
+    // Read a streamed response one JSON line at a time, as the lines arrive
+    async function* jsonLines(res) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, end).trim();
+          buffer = buffer.slice(end + 1);
+          if (line) yield JSON.parse(line);
+        }
+      }
+      if (buffer.trim()) yield JSON.parse(buffer);
+    }
+
+    function addMessage(role, html) {
+      const div = document.createElement("div");
+      div.className = `msg ${role}`;
+      div.innerHTML = html;
+      $("log").append(div);
+      div.scrollIntoView({ block: "end" });
+      return div;
+    }
+
+    // The answer as Markdown with math. Math is set aside first so Markdown cannot mangle it,
+    // the HTML is sanitized (model text must never become live HTML), then KaTeX draws the math.
+    // [2] becomes a link to source 2 of this reply.
+    const MATH = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?=\S)[^$\n]+?(?<=\S)\$/g;
+    function showAnswer(el, text, id) {
+      const cite = (html) => html.replace(/\[(\d+)\]/g, `<a class="cite" href="#${id}-s$1">[$1]</a>`);
+      if (!window.marked || !window.DOMPurify) {  // offline: plain text
+        el.innerHTML = cite(esc(text));
+        return;
+      }
+      const math = [];
+      const kept = text.replace(MATH, (m) => `@@MATH${math.push(m) - 1}@@`);
+      const html = DOMPurify.sanitize(marked.parse(kept)).replace(/@@MATH(\d+)@@/g, (_, i) => esc(math[i]));
+      el.classList.add("md");
+      el.innerHTML = cite(html);
+      window.renderMathInElement?.(el, {
+        throwOnError: false,
+        delimiters: [{ left: "$$", right: "$$", display: true }, { left: "\\[", right: "\\]", display: true },
+                     { left: "\\(", right: "\\)", display: false }, { left: "$", right: "$", display: false }],
+      });
+    }
+
+    function showSources(reply, id, event) {
+      const by = `<span class="muted answered-by">${esc([event.provider, event.model].filter(Boolean).join(" · "))}</span>`;
+      const items = event.passages.map((p) => `
+        <li id="${id}-s${p.n}">${esc(p.title)}${p.location ? ` (${esc(p.location)})` : ""}
+          <span class="muted">· ${esc(p.course)}</span>
+          <a href="${fileUrl(p.course_id, p.path)}">Saved text</a> ${link(p.url, "Canvas")}</li>`).join("");
+      reply.insertAdjacentHTML("beforeend", `${by}
+        <details class="sources"><summary>Sources from the first search (${event.passages.length})</summary>
+        <ol>${items}</ol></details>`);
+    }
+
+    // "Behind the answer": exactly what the model was told and given, and what it looked up
+    function showTrace(reply, t) {
+      const calls = t.tools.map((c) => `
+        <li><code>${esc(c.name)}</code> ${esc(JSON.stringify(c.args))} <span class="muted">· ${c.ms} ms ·
+          ${c.chars} characters back</span><pre>${esc(c.result)}${c.chars > c.result.length ? "\n…" : ""}</pre></li>`);
+      reply.insertAdjacentHTML("beforeend", `
+        <details class="trace"><summary>Behind the answer · ${t.tools.length} tool call${t.tools.length === 1 ? "" : "s"}
+          · ${t.seconds} s · effort ${esc(t.effort)}</summary>
+          <h4>What the model was told (the system prompt)</h4><pre>${esc(t.system)}</pre>
+          <h4>What it was given (files, deadlines, the first search, the conversation, the question)</h4>
+          <pre>${esc(t.prompt)}</pre>
+          <h4>What it looked up</h4>${calls.length ? `<ol>${calls.join("")}</ol>` : '<p class="muted">Nothing: the first search was enough.</p>'}
+        </details>`);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Courses · Academic Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <strong>Academic Assistant</strong>
+    <nav><a href="index.html" class="active">Courses</a><a href="search.html">Search</a><a href="ask.html">Ask</a></nav>
+  </header>
+
+  <main>
+    <section class="bar">
+      <p id="status" class="muted">Loading…</p>
+      <button id="sync">Sync with Canvas</button>
+    </section>
+    <p id="job" class="muted"></p>
+
+    <section class="panel">
+      <h2>Due in the next 7 days</h2>
+      <div id="due" class="muted">Loading…</div>
+    </section>
+
+    <h2>Courses</h2>
+    <div id="courses" class="cards"></div>
+
+    <section id="course" class="panel" hidden></section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const TYPE_ORDER = ["upload", "syllabus", "home", "module", "page", "assignment", "quiz",
+                        "announcement", "discussion", "file"];
+    let courses = [];        // from GET /courses
+    let openCourse = null;   // id of the course shown below the cards
+    let notice = "";         // last upload/delete message
+
+    async function refresh() {
+      await Promise.all([loadStatus(), loadDue(), loadCourses()]);
+      if (openCourse) await showCourse(openCourse);
+    }
+
+    // --- top line: GET /health
+    async function loadStatus() {
+      const h = await api("/health");
+      $("status").textContent = `${h.courses} course(s) · ${h.indexed_docs} documents and ` +
+        `${h.indexed_chunks} chunks indexed · embedder ${h.embedder}`;
+      $("sync").disabled = !h.canvas_configured || Boolean(h.busy_job);
+      $("sync").title = h.canvas_configured ? "" : "Set CANVAS_BASE_URL and CANVAS_API_TOKEN in .env, then restart acad serve";
+    }
+
+    // --- Sync button: POST /sync starts a background job, GET /jobs/{id} reports progress
+    $("sync").addEventListener("click", async () => {
+      $("sync").disabled = true;
+      try {
+        let job = await api("/sync", { method: "POST" });
+        while (job.status === "queued" || job.status === "running") {
+          $("job").textContent = job.total ? `${job.message} (${job.done}/${job.total})` : "Starting…";
+          await sleep(700);
+          job = await api(`/jobs/${job.id}`);
+        }
+        $("job").textContent = job.status === "done" ? `Done: ${job.result.summary}` : `Sync failed: ${job.error}`;
+      } catch (err) {
+        $("job").textContent = err.message;
+      }
+      await refresh();
+    });
+
+    // --- Due soon: GET /due, the same exact list every question on the Ask page gets
+    async function loadDue() {
+      try {
+        const { items } = await api("/due?days=7");
+        $("due").innerHTML = items.length
+          ? `<ul class="plain">${items.map((i) => `
+              <li><strong>${esc(i.due_local)}</strong> · ${esc(i.course)} · ${link(i.url, i.title) || esc(i.title)}
+                ${i.submitted ? '<span class="badge">submitted</span>' : ""}</li>`).join("")}</ul>`
+          : "Nothing due in the next 7 days.";
+      } catch (err) {
+        $("due").textContent = err.message;
+      }
+    }
+
+    // --- course cards: GET /courses
+    async function loadCourses() {
+      courses = await api("/courses");
+      $("courses").innerHTML = courses.length
+        ? courses.map((c) => `
+            <button class="card${c.id === openCourse ? " selected" : ""}" data-id="${esc(c.id)}">
+              <strong>${esc(c.name)}</strong>
+              <span class="muted">${esc([c.course_code, c.term].filter(Boolean).join(" · "))}</span>
+              <span class="summary">${esc(c.summary)}</span>
+              <span class="muted">${c.indexed_chunks} chunk${c.indexed_chunks === 1 ? "" : "s"} indexed</span>
+            </button>`).join("")
+        : '<p class="muted">No courses yet. Press <em>Sync with Canvas</em> (or run <code>acad sync</code>).</p>';
+    }
+
+    $("courses").addEventListener("click", async (event) => {
+      const card = event.target.closest(".card");
+      if (!card) return;
+      notice = "";
+      history.replaceState(null, "", `#${card.dataset.id}`);  // so the course view can be bookmarked
+      await showCourse(card.dataset.id);
+      document.querySelectorAll(".card").forEach((c) => c.classList.toggle("selected", c === card));
+      $("course").scrollIntoView({ behavior: "smooth" });
+    });
+
+    // --- one course: GET /courses/{id}/documents, plus upload and delete
+    async function showCourse(id) {
+      openCourse = id;
+      const course = courses.find((c) => c.id === id);
+      const docs = await api(`/courses/${encodeURIComponent(id)}/documents`);
+      const groups = TYPE_ORDER.map((type) => [type, docs.filter((d) => d.type === type)])
+                               .filter(([, items]) => items.length);
+      $("course").hidden = false;
+      $("course").innerHTML = `
+        <h2>${esc(course.name)}</h2>
+        ${link(course.canvas_url, "Open in Canvas")}
+        <form id="upload" class="upload">
+          <strong>Add your own documents</strong>
+          <span class="muted">a textbook, chapters, notes, practice exams (PDF, Word, PowerPoint, text)</span>
+          <input type="file" name="file" required multiple
+                 accept=".pdf,.docx,.pptx,.txt,.md,.html,.htm,.csv">
+          <button>Add to this course</button>
+          <span class="muted" id="upload-status">${esc(notice)}</span>
+        </form>
+        ${groups.map(([type, items]) => `
+          <details ${type === "upload" ? "open" : ""}>
+            <summary>${esc(type)} (${items.length})</summary>
+            <table>${items.map((d) => docRow(id, d)).join("")}</table>
+          </details>`).join("")}`;
+      $("upload").addEventListener("submit", (event) => upload(event, id));
+    }
+
+    function docRow(courseId, d) {
+      const original = d.path.replace(/\.md$/, "");
+      const hasOriginal = d.type === "upload" || /\.(pdf|docx|pptx)$/i.test(original);
+      return `<tr>
+        <td>${esc(d.title)} ${d.has_text ? "" : '<span class="badge warn">no text</span>'}
+          ${d.module ? `<div class="muted">${esc(d.module)}</div>` : ""}</td>
+        <td class="links">
+          ${link(d.url, "Canvas")}
+          <a href="${fileUrl(courseId, d.path)}">Text</a>
+          ${hasOriginal ? `<a href="${fileUrl(courseId, original)}">Original</a>` : ""}
+          ${d.type === "upload" ? `<button class="link" data-delete="${esc(original)}">Delete</button>` : ""}
+        </td>
+      </tr>`;
+    }
+
+    // POST /courses/{id}/files, once per chosen file. A whole textbook takes a minute or two to index.
+    async function upload(event, courseId) {
+      event.preventDefault();
+      const form = event.target;
+      const files = [...form.file.files];
+      form.querySelector("button").disabled = true;
+      const done = [];
+      for (const [i, file] of files.entries()) {
+        $("upload-status").textContent = `Adding ${file.name} (${i + 1} of ${files.length}): reading and indexing…`;
+        const body = new FormData();
+        body.append("file", file);
+        try {
+          const r = await api(`/courses/${encodeURIComponent(courseId)}/files`, { method: "POST", body });
+          done.push(r.has_text ? `${file.name}: ${r.chunks} chunks searchable`
+                               : `${file.name}: added, but no text could be read (a scanned PDF?)`);
+        } catch (err) {
+          done.push(`${file.name}: ${err.message}`);
+        }
+      }
+      notice = done.join(" · ");
+      await refresh();
+    }
+
+    $("course").addEventListener("click", async (event) => {
+      const path = event.target.dataset.delete;
+      if (!path || !confirm(`Delete ${path.split("/").pop()}?`)) return;
+      try {
+        await api(`${fileUrl(openCourse, path)}`, { method: "DELETE" });
+        notice = "Deleted, and removed from search.";
+      } catch (err) {
+        notice = err.message;
+      }
+      await refresh();
+    });
+
+    openCourse = decodeURIComponent(location.hash.slice(1)) || null;  // index.html#101 opens course 101
+    refresh();
+  </script>
+</body>
+</html>

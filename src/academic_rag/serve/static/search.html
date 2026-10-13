@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search · Academic Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <strong>Academic Assistant</strong>
+    <nav><a href="index.html">Courses</a><a href="search.html" class="active">Search</a><a href="ask.html">Ask</a></nav>
+  </header>
+
+  <main>
+    <p class="muted">These are the passages retrieval finds for your question: the raw evidence.
+      The Ask tab starts from the same search (with more results), and the AI can search again and
+      open whole documents when they are not enough.</p>
+
+    <form id="search" class="search">
+      <input name="q" placeholder="When is the midterm?" required autofocus>
+      <select name="course"><option value="">All courses</option></select>
+      <select name="k" title="How many passages">
+        <option>6</option><option>10</option><option>20</option>
+      </select>
+      <button>Search</button>
+    </form>
+
+    <p id="summary" class="muted"></p>
+    <div id="results"></div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const form = $("search");
+
+    // Fill the course dropdown: GET /courses
+    api("/courses").then((courses) => {
+      for (const c of courses) form.course.add(new Option(c.name, c.id));
+    });
+
+    // Search: POST /search {query, course?, top_k}
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      history.replaceState(null, "", `?q=${encodeURIComponent(form.q.value)}`);  // shareable link
+      const body = { query: form.q.value, top_k: Number(form.k.value) };
+      if (form.course.value) body.course = form.course.value;
+      $("summary").textContent = "Searching…";
+      $("results").innerHTML = "";
+      try {
+        const { passages } = await api("/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        $("summary").textContent = passages.length
+          ? `${passages.length} passages, best first. The number on the right is cosine similarity (1 = same meaning).`
+          : "No passages found. Has this course been synced?";
+        $("results").innerHTML = passages.map((p) => `
+          <article class="result">
+            <span class="score">${p.score.toFixed(2)}</span>
+            <strong>[${p.n}] ${esc(p.title)}</strong>
+            ${p.location ? `<span class="muted">(${esc(p.location)})</span>` : ""}
+            <span class="badge">${esc(p.type)}</span>
+            <div class="muted">${esc([p.course, p.module].filter(Boolean).join(" › "))}</div>
+            <p class="passage">${esc(p.text)}</p>
+            <div class="links">${link(p.url, "Open in Canvas")}<a href="${fileUrl(p.course_id, p.path)}">Saved text</a></div>
+          </article>`).join("");
+      } catch (err) {
+        $("summary").textContent = err.message;
+      }
+    });
+
+    // search.html?q=midterm runs that search straight away
+    const q = new URLSearchParams(location.search).get("q");
+    if (q) {
+      form.q.value = q;
+      form.requestSubmit();
+    }
+  </script>
+</body>
+</html>
