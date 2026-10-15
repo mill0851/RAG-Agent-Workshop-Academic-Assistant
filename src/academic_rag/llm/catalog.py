@@ -1,59 +1,46 @@
-"""The models the Ask page's dropdown offers, whether each works on this computer, and
-which effort levels each accepts."""
+"""The models the Ask page's dropdown offers, and whether each works on this computer.
+
+The menu is short on purpose: two models per AI, each with the same two effort levels,
+medium and high (REASONING_LEVEL in .env picks the default). A model set in LLM_MODEL
+that is not on the list is added to it, so the .env choice always shows."""
 
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
-import tempfile
 
 from ..config import Settings
 from .base import EFFORTS, PROVIDERS
 
-GEMINI_MODELS = [("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (most free quota)"),
-                 ("gemini-3.8-flash", "Gemini 3.8 Flash"), ("gemini-3.6-flash", "Gemini 3.6 Flash")]
-CLAUDE_MODELS = [("", "Claude (your default model)"), ("sonnet", "Claude Sonnet"), ("opus", "Claude Opus"),
-                 ("haiku", "Claude Haiku")]
+# (provider, model, label), in the menu's order. Edit this list to offer other models.
+MODELS = [
+    ("gemini", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
+    ("gemini", "gemini-3.8-flash", "Gemini 3.8 Flash"),
+    ("codex", "gpt-6-astra", "GPT-6-Astra"),
+    ("codex", "gpt-5.6-sol", "GPT-5.6-Sol"),
+    ("claude", "claude-opus-5-5", "Claude Opus 5.5"),
+    ("claude", "claude-sonnet-5-5", "Claude Sonnet 5.5"),
+]
 
 
 def model_choices(settings: Settings) -> list[dict]:
-    """Every provider and model, with whether it can run here and why not, and the effort
-    levels it accepts (Gemini's thinkingLevel, Claude's --effort and Codex's reasoning effort
-    all take medium and high; Codex lists them per model)."""
-    choices = []
-
-    def add(provider: str, model: str, label: str, problem: str = "", efforts=EFFORTS) -> None:
-        choices.append({"provider": provider, "model": model, "label": label, "available": not problem,
-                        "problem": problem, "efforts": [e for e in EFFORTS if e in efforts]})
-
-    for model, label in GEMINI_MODELS:
-        add("gemini", model, label, "" if settings.gemini_api_key else "set GEMINI_API_KEY in .env")
-    for model, label in CLAUDE_MODELS:
-        add("claude", model, label, "" if shutil.which("claude") else "Claude Code is not installed")
-    if shutil.which("codex"):
-        add("codex", "", "Codex (your default model)")
-        for model, label, efforts in codex_models():
-            add("codex", model, f"Codex · {label}", efforts=efforts)
-    else:
-        add("codex", "", "Codex", "the Codex CLI is not installed")
+    """Every model in MODELS (plus the one from .env), with whether it can run here and
+    why not, and the effort levels it accepts."""
+    models = list(MODELS)
     configured = (settings.llm_provider, settings.llm_model)
-    if all(configured) and configured[0] in PROVIDERS \
-            and not any((c["provider"], c["model"]) == configured for c in choices):
-        add(*configured, f"{settings.llm_provider} · {settings.llm_model} (from .env)")
+    if all(configured) and configured[0] in PROVIDERS and not any(m[:2] == configured for m in models):
+        models.append((*configured, f"{settings.llm_provider} · {settings.llm_model} (from .env)"))
+    choices = []
+    for provider, model, label in models:
+        problem = _problem(settings, provider)
+        choices.append({"provider": provider, "model": model, "label": label, "available": not problem,
+                        "problem": problem, "efforts": list(EFFORTS)})
     return choices
 
 
-def codex_models() -> list[tuple[str, str, list[str]]]:
-    """The models the installed Codex CLI lists for your account, best first, with the
-    reasoning efforts each supports."""
-    try:
-        out = subprocess.run([shutil.which("codex"), "debug", "models"], capture_output=True, text=True,
-                             encoding="utf-8", timeout=30, cwd=tempfile.gettempdir()).stdout
-        models = json.loads(out).get("models", [])
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
-        return []  # an older Codex, or no network: its default model still works
-    listed = sorted((m for m in models if m.get("visibility") == "list"), key=lambda m: m.get("priority", 99))
-    return [(m["slug"], m.get("display_name") or m["slug"],
-             [level.get("effort") for level in m.get("supported_reasoning_levels") or []] or list(EFFORTS))
-            for m in listed if m.get("slug")]
+def _problem(settings: Settings, provider: str) -> str:
+    """Why this AI cannot answer on this computer, or "" when it can."""
+    if provider == "gemini":
+        return "" if settings.gemini_api_key else "set GEMINI_API_KEY in .env"
+    if provider == "claude":
+        return "" if shutil.which("claude") else "Claude Code is not installed"
+    return "" if shutil.which("codex") else "the Codex CLI is not installed"

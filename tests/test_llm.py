@@ -3,7 +3,6 @@ Gemini through our own loop, Claude Code and Codex through MCP. Fake CLIs and a 
 
 import io
 import json
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -56,37 +55,25 @@ def test_a_provider_picked_on_the_page_overrides_env():
 
 def test_model_choices_show_what_works_here(monkeypatch):
     monkeypatch.setattr(catalog.shutil, "which", lambda name: "/bin/codex" if name == "codex" else None)
-    models = {"models": [
-        {"slug": "gpt-slow", "display_name": "GPT-Slow", "visibility": "list", "priority": 5,
-         "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}]},
-        {"slug": "gpt-hidden", "display_name": "GPT-Hidden", "visibility": "hide", "priority": 1},
-        {"slug": "gpt-best", "display_name": "GPT-Best", "visibility": "list", "priority": 2},
-    ]}
-    monkeypatch.setattr(catalog.subprocess, "run",
-                        lambda *a, **kw: subprocess.CompletedProcess(a, 0, stdout=json.dumps(models)))
-    choices = model_choices(Settings(llm_provider="claude", llm_model="claude-sonnet-5"))
+    choices = model_choices(Settings(llm_provider="claude", llm_model="claude-haiku-5-5"))
     by_provider = lambda name: [c for c in choices if c["provider"] == name]  # noqa: E731
 
-    assert [c["label"] for c in by_provider("codex")] == [
-        "Codex (your default model)", "Codex · GPT-Best", "Codex · GPT-Slow"]  # best first, hidden left out
+    assert [(c["provider"], c["model"]) for c in choices] == [  # two per AI, in the menu's order
+        ("gemini", "gemini-3.5-flash-lite"), ("gemini", "gemini-3.8-flash"),
+        ("codex", "gpt-6-astra"), ("codex", "gpt-5.6-sol"),
+        ("claude", "claude-opus-5-5"), ("claude", "claude-sonnet-5-5"),
+        ("claude", "claude-haiku-5-5")]  # plus the .env model, which is not one of them
+    assert by_provider("claude")[-1]["label"] == "claude · claude-haiku-5-5 (from .env)"
     assert all(c["available"] for c in by_provider("codex"))
     assert not any(c["available"] for c in by_provider("gemini"))
     assert by_provider("gemini")[0]["problem"] == "set GEMINI_API_KEY in .env"
     assert by_provider("claude")[0]["problem"] == "Claude Code is not installed"
-    assert by_provider("claude")[-1]["label"] == "claude · claude-sonnet-5 (from .env)"  # the .env model is offered
-    # the Effort menu: what each model accepts (this Codex model says it cannot think "high")
-    assert [c["efforts"] for c in by_provider("codex")] == [["medium", "high"], ["medium", "high"], ["medium"]]
-    assert all(c["efforts"] == ["medium", "high"] for c in by_provider("gemini") + by_provider("claude"))
+    assert all(c["efforts"] == ["medium", "high"] for c in choices)  # the reasoning level menu
 
 
-def test_without_a_codex_catalog_its_default_model_is_still_offered(monkeypatch):
-    monkeypatch.setattr(catalog.shutil, "which", lambda name: "/bin/codex")
-
-    def fails(*a, **kw):
-        raise subprocess.TimeoutExpired("codex", 30)
-    monkeypatch.setattr(catalog.subprocess, "run", fails)
-    codex = [c for c in model_choices(Settings()) if c["provider"] == "codex"]
-    assert [(c["model"], c["available"]) for c in codex] == [("", True)]
+def test_a_listed_env_model_is_not_offered_twice():
+    choices = model_choices(Settings(llm_provider="codex", llm_model="gpt-6-astra"))
+    assert [c["model"] for c in choices].count("gpt-6-astra") == 1 and len(choices) == 6
 
 
 # ------------------------------------------------------------------ Gemini

@@ -111,6 +111,18 @@ def test_unknown_backend_is_rejected(env, monkeypatch):
     assert "local or hash" in str(e.value)
 
 
+def test_reasoning_level_is_medium_unless_set(env, monkeypatch):
+    from academic_rag.config import load_settings
+
+    monkeypatch.setenv("REASONING_LEVEL", "")
+    assert load_settings(None).reasoning_level == "medium"
+    monkeypatch.setenv("REASONING_LEVEL", " High ")
+    assert load_settings(None).reasoning_level == "high"
+    monkeypatch.setenv("REASONING_LEVEL", "extreme")
+    with pytest.raises(SystemExit, match="medium or high"):
+        load_settings(None)
+
+
 def test_setup_reports_embedding_speed(env, capsys):
     assert run("setup") == 0
     out = capsys.readouterr().out

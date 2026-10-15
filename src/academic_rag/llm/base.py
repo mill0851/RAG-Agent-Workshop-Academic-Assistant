@@ -19,13 +19,13 @@ import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
-from ..config import Settings
+from ..config import REASONING_LEVELS, Settings
 
 if TYPE_CHECKING:
     from ..tools import Toolbox
 
 PROVIDERS = ("gemini", "claude", "codex")
-EFFORTS = ("medium", "high")  # how hard the model thinks: the Ask page's Effort menu
+EFFORTS = REASONING_LEVELS  # how hard the model thinks: the Ask page's menu; REASONING_LEVEL picks the default
 MODEL_NAME = re.compile(r"^[\w.:\-\[\]/]{1,100}$")  # model names reach a command line: nothing else allowed
 
 

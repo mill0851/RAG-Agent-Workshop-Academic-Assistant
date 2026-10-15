@@ -251,9 +251,9 @@ again.
 | Which tools it can call | `TOOLS` in [tools/toolbox.py](src/academic_rag/tools/toolbox.py); the tools in [tools/course.py](src/academic_rag/tools/course.py) |
 | How much evidence every question starts with | `PASSAGES`, `WHOLE_DOCUMENT_CHARS`, `WHOLE_PAGE_CHARS`, `CONTEXT_CHARS`, `DEADLINE_DAYS` in [agent/context.py](src/academic_rag/agent/context.py) |
 | How much of the conversation it remembers | `HISTORY_TURNS`, `HISTORY_CHARS` in [agent/prompts.py](src/academic_rag/agent/prompts.py) |
-| How hard it thinks | the **Effort** menu on the Ask page; the default, `EFFORT` in [agent/agent.py](src/academic_rag/agent/agent.py) |
+| How hard it thinks | the reasoning level menu (Medium, High) on the Ask page; the default, `REASONING_LEVEL` in `.env` (blank = medium) |
 | How many rounds of tool calls (Gemini) | `MAX_TOOL_ROUNDS` in [llm/gemini.py](src/academic_rag/llm/gemini.py) |
-| Which AI and model | the Ask page's model menu; the default, `LLM_PROVIDER` and `LLM_MODEL` in `.env` |
+| Which AI and model | the Ask page's model menu (`MODELS` in [llm/catalog.py](src/academic_rag/llm/catalog.py)); the default, `LLM_PROVIDER` and `LLM_MODEL` in `.env` |
 | What search returns | [index/search.py](src/academic_rag/index/search.py) (Task 3); chunk size, `CHUNK_CHARS` and `CHUNK_OVERLAP` in `.env` (then `acad embed --rebuild`) |
 
 ## Use it from your own code
