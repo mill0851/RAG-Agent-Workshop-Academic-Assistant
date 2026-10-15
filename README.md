@@ -106,25 +106,71 @@ menu lists every AI; one that cannot run is greyed out with the reason.
 
 </details>
 
-### 3. Check Canvas, and download the search model
+### 3. Check your Canvas token
 
 ```bash
-acad check      # "Token OK. Signed in as: <you>", then your courses
-acad setup      # a one-time download of the embedding model (about 80 MB)
+acad check      # "Token OK. Signed in as: <you>", then the courses it can see
 ```
 
-### 4. Start the app and sync your courses
+The rest of the setup follows the pipeline this project is built on, one command per stage:
+
+```
+acad scrape  ──►  acad setup  ──►  acad embed  ──►  acad serve
+Canvas to         the embedding    chunks, then     the web pages
+plain text        model            vectors          and the AI
+```
+
+### 4. Scrape Canvas into plain text
+
+```bash
+acad scrape     # every course: one .md file per page, assignment, announcement and file
+```
+
+The scraper reads each course through the Canvas API and saves it as readable text in
+`data/courses/`, one folder per course. PDFs and slides keep their page and slide numbers, and the
+exact due dates, points and grades go in each course's `facts.json`. The first time takes a few
+minutes. **While it runs, read [How it works together](#how-it-works-together).**
+
+Then open a course folder and look at one `.md` file next to its PDF: that text is everything the AI
+will ever see of it ([canvas/](src/academic_rag/canvas/README.md),
+[course_files/](src/academic_rag/course_files/README.md)).
+
+### 5. Download the embedding model
+
+```bash
+acad setup      # a one-time download (about 80 MB), and how fast it runs on this computer
+```
+
+The embedding model turns a piece of text into 384 numbers that capture its meaning. It runs on your
+computer: after this download, embedding and search never leave it.
+
+### 6. Chunk and embed your courses
+
+```bash
+acad embed      # "Done: ... chunks embedded. Index now holds ... chunks."
+```
+
+Two stages in one command. Each saved item is cut into chunks of about 1,000 characters, page by
+page, and each chunk is then embedded and stored in a vector database in `data/chroma/`
+([index/](src/academic_rag/index/README.md)). Run it again and it only redoes what changed.
+
+See what retrieval finds, with no AI yet:
+
+```bash
+acad search "when is the midterm"
+```
+
+### 7. Serve the app
 
 ```bash
 acad serve      # leave it running, and open http://127.0.0.1:8000
 ```
 
-On the Courses page, press **Sync with Canvas**. It saves every course and builds the search index,
-which takes a few minutes the first time. **While it runs, read
-[How it works together](#how-it-works-together).** Then open **Search** and try *"when is the
-midterm?"*.
+Open **Search** and try *"when is the midterm?"*: the same retrieval as step 6, in the browser. When
+your courses change in Canvas, press **Sync with Canvas** on the Courses page: it runs steps 4 and 6
+again, and only downloads and embeds what changed.
 
-### 5. Ask your first question
+### 8. Ask your first question
 
 Open **Ask**, choose a course, and ask something your course answers. Under the answer, open
 **Behind the answer**: what the AI was told, what it was given, and every tool it called. Each task
@@ -174,6 +220,9 @@ diagram of how its parts connect; its README says how to view it. `config.py` re
 Three journeys explain the whole system. Each step links to the folder that explains it.
 
 ### Sync: from Canvas to a search index
+
+`acad scrape` and `acad embed`, steps 4 and 6 above, are the two halves of a sync. The **Sync with
+Canvas** button runs both:
 
 1. The Courses page starts a background job on the server ([serve/](src/academic_rag/serve/README.md)).
 2. The job asks Canvas for every course and tab, and saves each page, assignment, announcement and
@@ -322,11 +371,13 @@ print(box.call("find_text", {"text": "Homework 3"}))                          # 
 | Command | What it does |
 |---|---|
 | `acad check` | Check the Canvas token; list the courses it can see |
+| `acad scrape` | Download your courses from Canvas into `data/courses/`, as plain text |
 | `acad setup` | Download the embedding model once; report how fast it runs here |
-| `acad sync` | Download from Canvas, then index (`acad scrape` and `acad embed` do one half each) |
+| `acad embed` | Chunk and embed the saved courses into the index (`--rebuild` to start over) |
+| `acad serve` | The web pages and the API on http://127.0.0.1:8000 (`--port` to change it) |
+| `acad sync` | `acad scrape`, then `acad embed`: what the **Sync with Canvas** button does |
 | `acad courses` | Saved courses, with short summaries and index counts |
 | `acad search "when is the midterm" --course physics` | What retrieval finds, in the terminal |
-| `acad serve` | The web pages and the API on http://127.0.0.1:8000 (`--port` to change it) |
 | `acad eval` | Score the agent on questions whose answers you know ([agent/](src/academic_rag/agent/README.md#going-further)) |
 
 Useful flags: `--course ID` (repeatable), `--no-files`, `--rebuild`, and `-v` for progress.
