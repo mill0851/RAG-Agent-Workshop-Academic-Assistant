@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from academic_rag import llm
-from academic_rag.agent import EFFORT, Context, ask, build_prompt, gather, small_to_big
+from academic_rag.agent import Context, ask, build_prompt, gather, small_to_big
 from academic_rag.agent import context as context_module
 from academic_rag.canvas import CanvasClient, scrape
 from academic_rag.index import HashEmbedder, Passage, embed_courses, open_store
@@ -160,7 +160,7 @@ def test_a_turn_streams_sources_tools_text_and_a_trace(indexed):
 
     trace = events[4]
     system, prompt, effort = provider.calls[0]
-    assert (trace["system"], trace["prompt"], trace["effort"]) == (system, prompt, EFFORT)
+    assert (trace["system"], trace["prompt"], trace["effort"]) == (system, prompt, "medium")
     assert [c["name"] for c in trace["tools"]] == ["find_text"] and trace["seconds"] >= 0
 
 
@@ -187,7 +187,7 @@ def test_ask_endpoint_streams_json_lines(ask_client):
     events = lines(r)
     assert [e["type"] for e in events] == ["sources", "text", "text", "trace", "done"]
     assert all(p["course_id"] == "101" for p in events[0]["passages"])
-    assert provider.calls[0][2] == EFFORT and events[-2]["effort"] == EFFORT
+    assert provider.calls[0][2] == "medium" and events[-2]["effort"] == "medium"  # REASONING_LEVEL blank
 
 
 def test_the_page_can_ask_the_model_to_think_harder(ask_client):
@@ -195,6 +195,16 @@ def test_the_page_can_ask_the_model_to_think_harder(ask_client):
     events = lines(client.post("/ask", json={"question": "midterm?", "effort": "high"}))
     assert provider.calls[0][2] == "high" and events[-2] == {**events[-2], "type": "trace", "effort": "high"}
     assert client.post("/ask", json={"question": "midterm?", "effort": "extreme"}).status_code == 422
+
+
+def test_reasoning_level_in_env_sets_the_default_effort(ask_client, settings):
+    client, provider = ask_client
+    settings.reasoning_level = "high"  # REASONING_LEVEL=high in .env
+    assert client.get("/models").json()["default"]["effort"] == "high"  # the page's menu starts there
+    events = lines(client.post("/ask", json={"question": "midterm?"}))
+    assert provider.calls[0][2] == "high" and events[-2]["effort"] == "high"
+    lines(client.post("/ask", json={"question": "midterm?", "effort": "medium"}))
+    assert provider.calls[1][2] == "medium"  # the page can still switch per question
 
 
 def test_each_question_opens_an_mcp_session_that_closes_with_it(ask_client):
@@ -257,11 +267,11 @@ def test_the_model_list_and_picking_a_model_on_the_page(ask_client, monkeypatch)
         return p
     monkeypatch.setattr(llm, "get_provider", fake_get_provider)
     monkeypatch.setattr(llm, "model_choices", lambda settings: [
-        {"provider": "codex", "model": "", "label": "Codex (your default model)", "available": True, "problem": "",
+        {"provider": "codex", "model": "gpt-6-astra", "label": "GPT-6-Astra", "available": True, "problem": "",
          "efforts": ["medium", "high"]}])
 
     body = client.get("/models").json()
-    assert body["choices"][0]["label"] == "Codex (your default model)" and "default" in body
+    assert body["choices"][0]["label"] == "GPT-6-Astra" and "default" in body
     assert body["choices"][0]["efforts"] == ["medium", "high"]  # the page's Effort menu
 
     events = lines(client.post("/ask", json={"question": "midterm?", "provider": "gemini", "model": "gemini-3.8-flash"}))

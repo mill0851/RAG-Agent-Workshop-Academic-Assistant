@@ -101,4 +101,4 @@ class AskRequest(BaseModel):
     course: str | None = Field(None, description="Course id, or part of the course name")
     provider: Literal["gemini", "claude", "codex"] | None = Field(None, description="Default: LLM_PROVIDER")
     model: str | None = Field(None, max_length=100, description="Empty: that provider's default model")
-    effort: Literal["medium", "high"] | None = Field(None, description="How hard the model thinks (default: medium)")
+    effort: Literal["medium", "high"] | None = Field(None, description="How hard the model thinks (default: REASONING_LEVEL in .env, or medium)")

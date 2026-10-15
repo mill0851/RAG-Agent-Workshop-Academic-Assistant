@@ -22,13 +22,12 @@ from ..tools import Toolbox
 from .context import gather
 from .prompts import build_prompt
 
-EFFORT = "medium"  # how hard the model thinks before answering, unless the Ask page picks "high"
-
 
 def ask(question: str, tools: Toolbox, provider: Provider, *, history: list[dict] = (),
-        effort: str = EFFORT) -> Iterator[dict]:
+        effort: str | None = None) -> Iterator[dict]:
     """Answer one question. `tools` is this question's Toolbox: it holds the course and
-    the data the tools read. Yields events for the web page:
+    the data the tools read. `effort` is how hard the model thinks, medium or high; None
+    means REASONING_LEVEL from .env (blank there = medium). Yields events for the web page:
 
         {"type": "sources", "passages": [...], "deadlines": [...], "provider": ..., "model": ...}
         {"type": "tool", "name": "find_text", "args": {...}}    the model looked something up
@@ -39,6 +38,7 @@ def ask(question: str, tools: Toolbox, provider: Provider, *, history: list[dict
     """
     started = time.perf_counter()
     settings = tools.settings
+    effort = effort or settings.reasoning_level
 
     # 1. The seed
     context = gather(question, settings=settings, store=tools.store, embedder=tools.embedder,

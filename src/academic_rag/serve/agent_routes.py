@@ -29,7 +29,8 @@ def agent_router(settings: Settings, state: State) -> APIRouter:
     @router.get("/models")
     def models() -> dict:
         """The AIs the Ask page can offer: every provider and model, and whether each works here."""
-        return {"default": {"provider": settings.llm_provider or None, "model": settings.llm_model},
+        return {"default": {"provider": settings.llm_provider or None, "model": settings.llm_model,
+                            "effort": settings.reasoning_level},
                 "choices": state.models()}
 
     @router.post("/ask")
@@ -52,7 +53,7 @@ def agent_router(settings: Settings, state: State) -> APIRouter:
         box.mcp_url = f"{str(request.base_url).rstrip('/')}/mcp/{session}"
         state.sessions[session] = box
         events = agent.ask(req.question, box, provider, history=[t.model_dump() for t in req.history],
-                           effort=req.effort or agent.EFFORT)
+                           effort=req.effort)  # None: REASONING_LEVEL from .env
 
         def lines():
             try:

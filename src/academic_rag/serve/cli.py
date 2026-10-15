@@ -195,7 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--file", default="tests/eval/questions.md", help="the questions (default: %(default)s)")
     r.add_argument("--provider", choices=llm.PROVIDERS, help="default: LLM_PROVIDER in .env")
     r.add_argument("--model", help="default: that provider's default model")
-    r.add_argument("--effort", choices=llm.EFFORTS, help="how hard the model thinks (default: medium)")
+    r.add_argument("--effort", choices=llm.EFFORTS, help="how hard the model thinks (default: REASONING_LEVEL in .env, or medium)")
     r.add_argument("--url", help="the running server (default: API_HOST and API_PORT from .env)")
     r.set_defaults(fn=cmd_eval)
 

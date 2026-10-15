@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+REASONING_LEVELS = ("medium", "high")  # how hard the AI thinks before answering: the Ask page's menu
+
 
 def _csv(value: str | None) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
@@ -35,6 +37,7 @@ class Settings:
     # --- The answering agent (the Ask tab)
     llm_provider: str = ""  # gemini | claude | codex; empty = the Ask tab explains how to choose one
     llm_model: str = ""  # optional; each provider has a default
+    reasoning_level: str = "medium"  # medium | high: the default; the Ask page can switch per question
     gemini_api_key: str = field(default="", repr=False)  # never printed
 
     # --- Storage
@@ -82,6 +85,9 @@ def load_settings(env_file: str | None = ".env") -> Settings:
 
     e = os.environ.get
     defaults = Settings()
+    reasoning_level = (e("REASONING_LEVEL") or "").strip().lower() or defaults.reasoning_level
+    if reasoning_level not in REASONING_LEVELS:
+        raise SystemExit(f"REASONING_LEVEL must be medium or high (blank = medium), not '{reasoning_level}'.")
     return Settings(
         canvas_base_url=(e("CANVAS_BASE_URL") or "").rstrip("/"),
         canvas_api_token=e("CANVAS_API_TOKEN", ""),
@@ -95,6 +101,7 @@ def load_settings(env_file: str | None = ".env") -> Settings:
         timezone=e("TIMEZONE") or defaults.timezone,
         llm_provider=(e("LLM_PROVIDER") or "").strip().lower(),
         llm_model=(e("LLM_MODEL") or "").strip(),
+        reasoning_level=reasoning_level,
         gemini_api_key=e("GEMINI_API_KEY", ""),
         data_dir=Path(e("DATA_DIR") or "./data"),
         api_host=e("API_HOST") or defaults.api_host,

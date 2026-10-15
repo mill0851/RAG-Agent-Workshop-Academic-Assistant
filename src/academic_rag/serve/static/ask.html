@@ -23,7 +23,7 @@
     <section class="bar">
       <select id="course"><option value="">All courses</option></select>
       <select id="model" title="Which AI writes the answers"></select>
-      <select id="effort" title="How hard the AI thinks before answering: High is slower, for harder questions" hidden></select>
+      <select id="effort" title="Reasoning level: how hard the AI thinks before answering. High is slower, for harder questions" hidden></select>
       <button id="new" class="secondary">New conversation</button>
     </section>
     <p id="notice" class="muted"></p>
@@ -54,9 +54,11 @@
     });
 
     // Which AI answers: GET /models lists every choice, whether it works on this computer, and
-    // the effort levels it accepts. The default comes from .env; choices made here are remembered.
+    // the effort levels it accepts. The defaults come from .env; choices made here are remembered.
     const efforts = {};  // "provider|model" -> ["medium", "high"]
+    let defaultEffort = "medium";  // REASONING_LEVEL in .env
     api("/models").then(({ default: preset, choices }) => {
+      defaultEffort = preset.effort ?? defaultEffort;
       const groups = {};
       for (const c of choices) {
         efforts[`${c.provider}|${c.model}`] = c.efforts ?? [];
@@ -67,8 +69,10 @@
         group.append(option);
       }
       const usable = choices.filter((c) => c.available).map((c) => `${c.provider}|${c.model}`);
-      const wanted = [remembered(), `${preset.provider}|${preset.model}`, `${preset.provider}|`];
-      $("model").value = wanted.find((v) => usable.includes(v)) ?? usable[0] ?? "";
+      const wanted = [remembered(), `${preset.provider}|${preset.model}`];
+      $("model").value = wanted.find((v) => usable.includes(v))
+        ?? usable.find((v) => v.startsWith(`${preset.provider}|`))  // LLM_MODEL blank: that AI's first model
+        ?? usable[0] ?? "";
       $("notice").textContent = usable.length
         ? "The AI you pick answers from your course material, and looks up more when it needs to."
         : "No AI is available yet: set LLM_PROVIDER in .env (see .env.example), then restart acad serve.";
@@ -84,13 +88,14 @@
     function remembered(key = "ask-model") {
       try { return localStorage.getItem(key); } catch { return null; }
     }
-    // The Effort menu offers the levels the chosen model accepts (hidden if it lists none)
+    // The reasoning level menu (Medium, High) offers the levels the chosen model accepts, hidden if
+    // it lists none. It starts on the level picked here before, else REASONING_LEVEL from .env.
     function showEfforts() {
       const levels = efforts[$("model").value] ?? [];
-      $("effort").replaceChildren(...levels.map((e) => new Option(`${e[0].toUpperCase()}${e.slice(1)} effort`, e)));
+      $("effort").replaceChildren(...levels.map((e) => new Option(`${e[0].toUpperCase()}${e.slice(1)}`, e)));
       $("effort").hidden = !levels.length;
-      const wanted = remembered("ask-effort");
-      if (levels.includes(wanted)) $("effort").value = wanted;
+      const wanted = [remembered("ask-effort"), defaultEffort].find((e) => levels.includes(e));
+      if (wanted) $("effort").value = wanted;
     }
 
     $("new").addEventListener("click", () => {
