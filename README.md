@@ -177,7 +177,8 @@ Open **Ask**, choose a course, and ask something your course answers. Under the 
 today shows up there.
 
 **Add your textbook** (or notes, or a practice exam): on the Courses page, open a course and use
-**Add your own documents**. It is searchable, with page numbers, a few seconds later.
+**Add your own documents**. It is searchable, with page numbers, a minute or two later. See
+[Adding your own documents](#adding-your-own-documents) for where the files go.
 
 ### If something goes wrong
 
@@ -199,7 +200,7 @@ today shows up there.
 ```
 academic-assistant/
 ├── .env                  your keys (you make it; never committed)
-├── data/                 your courses and the search index (made by Sync; never committed)
+├── data/                 your courses and the search index (from scrape and embed; never committed)
 ├── src/academic_rag/     the code: one folder per step, in order
 │   ├── canvas/           1. download your courses from Canvas
 │   ├── course_files/     2. turn pages, PDFs and slides into readable text
@@ -214,6 +215,40 @@ academic-assistant/
 Every folder has a README: the idea first, then the important code, then something to try. The
 three task folders end with their task. Every folder also has an `architecture.mmd`, a Mermaid
 diagram of how its parts connect; its README says how to view it. `config.py` reads `.env`.
+
+### Adding your own documents
+
+A textbook, your notes or a practice exam can answer what the Canvas material does not. Each course
+folder has an `uploads/` folder for them, next to what the scraper saved:
+
+```
+data/
+├── courses/
+│   └── Physics I Mechanics (41001)/       one folder per course: "<name> (<Canvas id>)"
+│       ├── course.json  facts.json        made by the scraper
+│       ├── pages/  assignments/  files/   made by the scraper, and rewritten by every sync
+│       └── uploads/                       ★ your own documents go here: a sync never touches it
+│           ├── Textbook.pdf               the file you added
+│           └── Textbook.pdf.md            its text, extracted for you: this is what gets searched
+├── chroma/                                the search index
+└── embed_manifest.json                    what is in the index
+```
+
+There are two ways to add one, and both end in the same place:
+
+- **On the Courses page:** open the course and use **Add your own documents**. The file is saved in
+  `uploads/` and indexed straight away. A whole textbook takes a minute or two.
+- **By hand:** copy the file into the course's `uploads/` folder (make the folder if it is not
+  there), then run `acad embed`, or press **Sync with Canvas**. Stop `acad serve` before running
+  `acad embed` yourself: only one thing may write to the index at a time.
+
+| Good to know | |
+|---|---|
+| File types | PDF, Word, PowerPoint, text, Markdown, CSV and HTML |
+| Size | The Courses page takes files up to 200 MB (`MAX_UPLOAD_MB` in `.env`) |
+| Citations | The file name becomes the title, as in *Textbook.pdf, p. 212*, so name it well |
+| Scanned books | A PDF of page images has no text to read, so nothing in it can be found. **Text** next to an upload on the Courses page shows what was extracted |
+| Removing one | **Delete** next to it on the Courses page; or delete the file and run `acad embed` again |
 
 ## How it works together
 
