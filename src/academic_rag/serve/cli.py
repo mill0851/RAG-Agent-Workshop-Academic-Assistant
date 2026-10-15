@@ -1,4 +1,8 @@
-"""The `acad` command: check | setup | scrape | embed | sync | courses | search | eval | serve"""
+"""The `acad` command: check | setup | scrape | embed | sync | courses | search | eval | serve
+
+Each command is one cmd_*() function, which calls the same functions the API does.
+build_parser() lists the commands and their options; main() runs the one asked for.
+"""
 
 from __future__ import annotations
 
@@ -14,12 +18,15 @@ from ..canvas import CanvasAuthError
 from ..config import Settings, load_settings
 from ..index import IndexMismatch
 
+# Text the size of a real chunk, for `acad setup` to time the embedding model with
 _SAMPLE = ("Gradient descent updates parameters in the direction of the negative gradient. "
            "Regularization penalizes large weights and reduces overfitting on small datasets. "
            "The midterm covers chapters one through five, including worked examples. ") * 5
 
 
+# ------------------------------------------------------------------ helpers
 def _setup_logging(verbose: bool) -> None:
+    """Our progress messages with -v (and always for scrape and sync), quiet libraries."""
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     logging.getLogger("academic_rag").setLevel(logging.INFO if verbose else logging.WARNING)
     for noisy in ("httpx", "httpcore"):  # httpx logs full URLs, and Canvas file links carry a verifier
@@ -33,9 +40,10 @@ def _progress():
     last = {"t": 0.0}
 
     def show(message: str, done: int, total: int) -> None:
+        """Redraw the progress line."""
         now = time.time()
         if not tty or (now - last["t"] < 0.1 and done < total):
-            return
+            return  # not a terminal, or redrawn less than 0.1 s ago
         last["t"] = now
         line = f"  [{done}/{total}] {message}"[:110]
         print("\r" + line.ljust(110), end="\n" if done >= total else "", file=sys.stderr, flush=True)
@@ -44,12 +52,14 @@ def _progress():
 
 
 def _embedder_and_store(settings: Settings):
+    """The embedder .env asks for, and the index built with it."""
     embedder = index.get_embedder(settings)
     return embedder, index.open_store(settings, embedder.name)
 
 
 # ----------------------------------------------------------------- commands
 def cmd_check(args, settings: Settings) -> int:
+    """acad check: who the Canvas token belongs to, and the courses it can see."""
     client = canvas.make_canvas(settings)
     me = client.get_self()
     courses = client.list_courses(settings.enrollment_states)
@@ -61,10 +71,12 @@ def cmd_check(args, settings: Settings) -> int:
 
 
 def cmd_setup(args, settings: Settings) -> int:
+    """acad setup: download the embedding model once, and time it on this computer."""
     if settings.embedding_backend == "local":
         print("Downloading the embedding model (one time, about 80 MB) ...")
     embedder = index.get_embedder(settings)
     embedder.embed_query("warm up")  # loads (and the first time downloads) the model
+
     sample = [_SAMPLE[: settings.chunk_chars]] * 32
     t = time.perf_counter()
     embedder.embed_documents(sample)
@@ -78,6 +90,7 @@ def cmd_setup(args, settings: Settings) -> int:
 
 
 def cmd_scrape(args, settings: Settings) -> int:
+    """acad scrape: download from Canvas into data/courses/."""
     stats = canvas.scrape(settings, course_ids=args.course, include_files=not args.no_files,
                           prune=not args.no_prune, progress=_progress())
     _print_scrape(stats, settings)
@@ -85,6 +98,7 @@ def cmd_scrape(args, settings: Settings) -> int:
 
 
 def _print_scrape(stats, settings: Settings) -> None:
+    """Each course's folder and how many items each tab gave, then the totals."""
     for c in stats.courses:
         tabs = ", ".join(f"{t['label']}={t['items']}" for t in c.tabs if t["status"] in {"scraped", "empty"})
         print(f"  {c.name}\n      -> {settings.courses_dir / c.folder}\n      {tabs}")
@@ -92,6 +106,7 @@ def _print_scrape(stats, settings: Settings) -> None:
 
 
 def cmd_embed(args, settings: Settings) -> int:
+    """acad embed: index the saved courses (only what changed, unless --rebuild)."""
     embedder, store = _embedder_and_store(settings)
     stats = index.embed_courses(settings, store, embedder, course_ids=args.course, rebuild=args.rebuild,
                                 progress=_progress())
@@ -100,11 +115,13 @@ def cmd_embed(args, settings: Settings) -> int:
 
 
 def cmd_sync(args, settings: Settings) -> int:
+    """acad sync: scrape, then embed."""
     cmd_scrape(args, settings)
     return cmd_embed(args, settings)
 
 
 def cmd_courses(args, settings: Settings) -> int:
+    """acad courses: the saved courses, with their summaries and index counts."""
     courses = course_files.list_courses(settings)
     if not courses:
         print("Nothing scraped yet. Run `acad scrape`.")
@@ -120,6 +137,7 @@ def cmd_courses(args, settings: Settings) -> int:
 
 
 def cmd_search(args, settings: Settings) -> int:
+    """acad search: what retrieval finds for a query, with no AI."""
     embedder, store = _embedder_and_store(settings)
     if store.count() == 0:
         raise SystemExit("The index is empty. Run `acad scrape` then `acad embed` (or `acad sync`).")
@@ -128,12 +146,14 @@ def cmd_search(args, settings: Settings) -> int:
         course_id, problem = index.resolve_course(course_files.list_courses(settings), args.course)
         if problem:
             raise SystemExit(problem)
-    passages = index.search(store, embedder, " ".join(args.query), args.k, course_id=course_id, source_types=args.type)
+    passages = index.search(store, embedder, " ".join(args.query), args.k,
+                            course_id=course_id, source_types=args.type)
     print(index.format_passages(passages, max_chars=600) if passages else "No matching passages.")
     return 0
 
 
 def cmd_eval(args, settings: Settings) -> int:
+    """acad eval: score the running server on questions with known answers (eval.py)."""
     from .eval import run
 
     url = args.url or f"http://{settings.api_host}:{settings.api_port}"
@@ -142,6 +162,7 @@ def cmd_eval(args, settings: Settings) -> int:
 
 
 def cmd_serve(args, settings: Settings) -> int:
+    """acad serve: the web pages and the API, until Ctrl+C."""
     import uvicorn
 
     from .api import create_app
@@ -154,24 +175,31 @@ def cmd_serve(args, settings: Settings) -> int:
 
 # --------------------------------------------------------------------- main
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="acad", description="Academic assistant over your Canvas course materials")
+    """Every command and its options, as `acad --help` lists them."""
+    p = argparse.ArgumentParser(prog="acad",
+                                description="Academic assistant over your Canvas course materials")
     p.add_argument("-v", "--verbose", action="store_true", help="show progress logging")
     p.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     sub = p.add_subparsers(dest="command", required=True)
 
+    # Options that several commands share
     def course_arg(sp):
+        """--course, for the commands that can do only some courses."""
         sp.add_argument("--course", action="append", help="course id (repeatable); default: all courses")
 
     def scrape_args(sp):
+        """--no-files and --no-prune, for scrape and sync."""
         sp.add_argument("--no-files", action="store_true", help="skip downloading PDFs/slides/docs")
         sp.add_argument("--no-prune", action="store_true", help="keep saved items that were deleted in Canvas")
 
     def rebuild_arg(sp):
+        """--rebuild, for embed and sync."""
         sp.add_argument("--rebuild", action="store_true",
                         help="wipe the index and re-embed everything (needed after changing EMBEDDING_BACKEND)")
 
     sub.add_parser("check", help="verify the Canvas token and list visible courses").set_defaults(fn=cmd_check)
-    sub.add_parser("setup", help="download the local embedding model and measure its speed").set_defaults(fn=cmd_setup)
+    sub.add_parser("setup", help="download the local embedding model and measure its speed"
+                   ).set_defaults(fn=cmd_setup)
 
     s = sub.add_parser("scrape", help="save every readable Canvas tab into data/courses/<course name>/")
     course_arg(s)
@@ -195,7 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--file", default="tests/eval/questions.md", help="the questions (default: %(default)s)")
     r.add_argument("--provider", choices=llm.PROVIDERS, help="default: LLM_PROVIDER in .env")
     r.add_argument("--model", help="default: that provider's default model")
-    r.add_argument("--effort", choices=llm.EFFORTS, help="how hard the model thinks (default: REASONING_LEVEL in .env, or medium)")
+    r.add_argument("--effort", choices=llm.EFFORTS,
+                   help="how hard the model thinks (default: REASONING_LEVEL in .env, or medium)")
     r.add_argument("--url", help="the running server (default: API_HOST and API_PORT from .env)")
     r.set_defaults(fn=cmd_eval)
 
@@ -214,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run one command. Expected problems (a bad token, a mixed-up index) print one line."""
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose or args.command in {"scrape", "sync"})
     settings = load_settings(args.env_file)

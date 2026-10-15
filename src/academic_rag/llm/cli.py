@@ -28,6 +28,7 @@ def run_cli(program: str, args: list[str], prompt: str, *, files: dict[str, str]
     if exe is None:
         raise ProviderError(f"`{program}` was not found. Install it (and log in), or choose another AI.")
     recent: deque[str] = deque(maxlen=5)  # the last lines that were not JSON, for error messages
+
     with tempfile.TemporaryDirectory() as folder:
         for name, content in (files or {}).items():
             Path(folder, name).write_text(content, encoding="utf-8")
@@ -53,5 +54,6 @@ def run_cli(program: str, args: list[str], prompt: str, *, files: dict[str, str]
             if proc.poll() is None:  # the page was closed mid-answer: stop the CLI
                 proc.kill()
                 proc.wait()
+
     if proc.returncode:
         raise ProviderError(f"`{program}` failed: {' | '.join(recent) or f'exit code {proc.returncode}'}")

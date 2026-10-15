@@ -8,7 +8,7 @@ import respx
 
 from academic_rag.canvas import CanvasAuthError, CanvasClient, CanvasNotAvailable
 from academic_rag.canvas import scrape as run_scrape
-from academic_rag.canvas.scraper import (
+from academic_rag.canvas.naming import (
     extractive_summary, looks_like_id, resolve_course_name, summary_inputs_hash, syllabus_title,
 )
 from academic_rag.course_files import read_document, read_json, read_meta

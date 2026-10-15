@@ -14,6 +14,22 @@ them.
 | [due_soon.py](due_soon.py) | The exact deadline list every question gets |
 | [mcp.py](mcp.py) | The same tools for Claude Code and Codex, over MCP |
 
+## Architecture diagram
+
+[architecture.mmd](architecture.mmd) draws one tool call: the model's request, `Toolbox.call()`, the
+tool, what it reads, and the text that goes back to the model. It is a
+[Mermaid](https://mermaid.js.org) diagram: plain text that a Mermaid viewer draws as a flowchart. To
+see it:
+
+- **In VS Code:** install a Mermaid extension, such as *Mermaid Chart*, open `architecture.mmd`, and
+  open its preview.
+- **In a browser:** paste the file into the editor at https://mermaid.live.
+- **As an image file:** run this in this folder. The first run downloads a browser to draw with.
+
+  ```bash
+  npx -p @mermaid-js/mermaid-cli mmdc -i architecture.mmd -o architecture.svg
+  ```
+
 ## The idea
 
 ### Three ways to look, because one is never enough
@@ -80,6 +96,54 @@ tools, the scope and the record are the same for every AI.
 **Deadlines are given, not looked up.** "What is due this week?" needs exact dates, which
 `facts.json` has. The list is small, so every question gets the next 14 days of deadlines up front
 ([due_soon.py](due_soon.py)).
+
+## Inside one tool call, step by step
+
+Every tool call, from any AI, ends in the same function: `Toolbox.call()` in
+[toolbox.py](toolbox.py).
+
+```
+Gemini                                  Claude Code, Codex
+llm/gemini.py reads a functionCall      POST /mcp/<session> with tools/call  (serve/agent_routes.py)
+        │                                         mcp.handle()  (mcp.py)
+        └──────────────────┬──────────────────────┘
+                   Toolbox.call(name, args)
+                   1. find the tool by its name
+                   2. run(box, **args)         the tool reads inside box.folders() only
+                   3. any problem becomes text: no such tool, wrong arguments, not built yet, failed
+                   4. record the call          name, arguments, the start of the result, size, time
+                   5. return the text          back to the model, which decides what to do next
+```
+
+**One Toolbox per question.** The server makes a new Toolbox for every question, with the course
+chosen on the Ask page. `box.folders()` is that course's folder, or every course's folder for
+*All courses*. It also gets an MCP address with an unguessable token, which Claude Code and Codex
+call, and which stops working when the answer ends.
+
+### What each tool does
+
+| Tool | Reads | Returns | Limit |
+|---|---|---|---|
+| `search_course(query)` | The index, through the same `search()` as the Search page | Passages, each with its file path | 10 passages |
+| `find_text(text)` | Every item in the course folders, line by line, ignoring spaces and capitals | Each matching line, with its document, page and path | 30 lines |
+| `read_document(path)` | One `.md` item, only if it is inside the course folders | The whole text, with page labels | 30,000 characters |
+| `grades(course)` | `facts.json` | Task 2: your current grade and each scored assignment | Not built on `main` |
+
+`due_soon()` in [due_soon.py](due_soon.py) is not a tool: every question gets the next 14 days of
+deadlines from `facts.json` without asking, and the Courses page's **Due soon** panel shows the next
+7 (`GET /due`).
+
+### What a problem looks like to the model
+
+| Problem | The text the model gets |
+|---|---|
+| It asked for a tool that does not exist | `There is no tool called <name>.` |
+| It sent missing or unknown arguments | `Wrong arguments for <name>: ...` |
+| The tool is not finished, like `grades` before Task 2 | `<name> is not built yet.` |
+| The tool failed | `<name> failed: <the error>` |
+| A path outside the course | `That is not a document of this course. ...` |
+
+None of these ends the answer: the model reads the text and tries something else.
 
 ## Try it
 

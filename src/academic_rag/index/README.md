@@ -14,6 +14,22 @@ This folder is the **retrieve** half. The files follow the pipeline, in order:
 The Ask page's agent uses this search twice: for the first passages every question gets, and as its
 `search_course` tool when it wants to search again ([tools/](../tools/README.md)).
 
+## Architecture diagram
+
+[architecture.mmd](architecture.mmd) draws both halves of this folder: building the index from the
+course folders, and searching it. Both use the same embedder and the same Chroma store. It is a
+[Mermaid](https://mermaid.js.org) diagram: plain text that a Mermaid viewer draws as a flowchart. To
+see it:
+
+- **In VS Code:** install a Mermaid extension, such as *Mermaid Chart*, open `architecture.mmd`, and
+  open its preview.
+- **In a browser:** paste the file into the editor at https://mermaid.live.
+- **As an image file:** run this in this folder. The first run downloads a browser to draw with.
+
+  ```bash
+  npx -p @mermaid-js/mermaid-cli mmdc -i architecture.mmd -o architecture.svg
+  ```
+
 ## The idea
 
 ### Chunking
@@ -71,6 +87,65 @@ for n, p in enumerate(passages, start=1):
 
 Fetching three times more than you show is a common pattern: *retrieve wide, then rerank*. A cheap
 first stage finds candidates; a second, smarter stage orders them.
+
+## Building and searching, step by step
+
+### Building: embed_courses()
+
+`acad embed`, and the second half of every Sync, run `embed_courses()` in [build.py](build.py):
+
+```
+embed_courses()
+1. the course folders          data/courses/*/ with a course.json (and your uploads/ files)
+2. what is indexed already     data/embed_manifest.json; --rebuild empties the index instead
+3. for each item:
+     read_document()             its header and its labelled Segments
+     unchanged?                  the same content hash as in the manifest: skipped
+     chunk_document()            about 1,000 characters, one page at a time, cut to fit the model
+     embed_documents()           about 64 chunks at a time, on your CPU
+     store.upsert()              into Chroma, data/chroma/; the manifest is saved after each batch
+4. prune                       items whose file is gone are taken out of the index
+```
+
+**Only what changed.** The manifest records a fingerprint of every item it indexed. An item whose
+fingerprint is the same as last time is skipped, so a second embed only redoes what changed. A
+changed item has its old chunks deleted first, because it may now have a different number of chunks.
+Because the manifest is saved after every batch, an interrupted embed keeps what it finished.
+
+**One model per index.** The index records which embedder built it. Vectors from two different
+models cannot be compared, so if `EMBEDDING_BACKEND` changes, every search and embed stops with a
+message to run `acad embed --rebuild`.
+
+### What each chunk is stored with
+
+| Detail | What it is | Used by |
+|---|---|---|
+| The vector | 384 numbers, from the chunk's header line and text | finding the nearest chunks |
+| The text | The chunk itself, without the header line | the passages shown and sent to the model |
+| `course_id`, `source_type` | Its course and type | limiting a search to one course, or to some types |
+| `title`, `module`, `location`, `section` | Its document, module, page or slide, and nearest heading | citations like *Lecture 09.pdf (p. 2)* |
+| `path`, `url` | Its saved `.md` file, and its page in Canvas | `read_document`, and the links under each source |
+| `doc_id`, `chunk_index` | Which item it came from, and where in it | updating and deleting an item's chunks |
+
+### Searching: search()
+
+```
+search(question, k)
+1. embed_query()             the question, with the same model: 384 numbers
+2. store.query()             the k × 3 nearest chunks by cosine similarity, in one course if chosen
+3. boost_exact_matches()     Task 3: exact codes like "HW 2" first (on main, it changes nothing)
+4. the best k, numbered      Passages: title, page, path, score and text, numbered [1], [2], ...
+```
+
+| Who searches | How many passages |
+|---|---|
+| The Search page (`POST /search`) | 6, 10 or 20, from its menu |
+| `acad search` | 6, or `-k` |
+| The `search_course` tool | 10 |
+| The first search of every question on the Ask page | 20, then widened to whole pages ([agent/](../agent/README.md)) |
+
+`format_passages()` turns passages into the text block that `acad search` prints and the model
+reads.
 
 ## Try it
 

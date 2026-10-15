@@ -2,7 +2,11 @@
 
 The menu is short on purpose: two models per AI, each with the same two effort levels,
 medium and high (REASONING_LEVEL in .env picks the default). A model set in LLM_MODEL
-that is not on the list is added to it, so the .env choice always shows."""
+that is not on the list is added to it, so the .env choice always shows.
+
+    MODELS            the menu, in order: edit it to offer other models
+    model_choices()   the menu for GET /models, with what works on this computer
+"""
 
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ def model_choices(settings: Settings) -> list[dict]:
     configured = (settings.llm_provider, settings.llm_model)
     if all(configured) and configured[0] in PROVIDERS and not any(m[:2] == configured for m in models):
         models.append((*configured, f"{settings.llm_provider} · {settings.llm_model} (from .env)"))
+
     choices = []
     for provider, model, label in models:
         problem = _problem(settings, provider)

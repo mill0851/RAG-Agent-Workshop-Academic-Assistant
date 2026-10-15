@@ -13,6 +13,11 @@ Each question is sent to POST /ask exactly as the Ask page sends it, so the whol
 is tested: the first search, the tools, the prompt and the model. Per question it
 reports whether the expected source was found (in the first search, by a tool, or
 not at all), which facts the answer mentions, how many tools were called, and the time.
+
+    parse()   the questions file, as Questions
+    ask()     one question, through POST /ask
+    score()   what one answer got right
+    run()     every question: print a line each, and save the results as JSON
 """
 
 from __future__ import annotations
@@ -26,11 +31,13 @@ from pathlib import Path
 
 import httpx
 
-FIELD = re.compile(r"^(course|source|must mention|must not mention):\s*(.*)$", re.I)
+FIELD = re.compile(r"^(course|source|must mention|must not mention):\s*(.*)$", re.I)  # a "name: value" line
 
 
 @dataclass
 class Question:
+    """One question, and what its answer must and must not contain."""
+
     text: str
     course: str = ""
     sources: list[str] = field(default_factory=list)  # any one of these titles counts as found
@@ -69,8 +76,10 @@ def score(q: Question, events: list[dict]) -> dict:
     looked_up = " ".join(f"{json.dumps(c['args'])} {c['result']}" for c in calls)
 
     def found_in(text: str) -> bool:
+        """Does this text name one of the expected sources?"""
         return any(s.lower() in text.lower() for s in q.sources)
 
+    # Where the expected source turned up: in the first search, through a tool, or nowhere
     source = "-" if not q.sources else "seed" if found_in(seed) else "tool" if found_in(looked_up) else "missed"
     facts = [any(v.lower() in answer.lower() for v in options) for options in q.must]
     wrong = [w for w in q.must_not if w.lower() in answer.lower()]
@@ -82,6 +91,7 @@ def score(q: Question, events: list[dict]) -> dict:
 
 def ask(client: httpx.Client, q: Question, provider: str | None, model: str | None,
         effort: str | None = None) -> list[dict]:
+    """Send one question to POST /ask, as the Ask page does, and return every event."""
     body = {"question": q.text, **({"course": q.course} if q.course else {})}
     if provider:
         body.update(provider=provider, model=model or "")
@@ -96,6 +106,8 @@ def ask(client: httpx.Client, q: Question, provider: str | None, model: str | No
 
 def run(path: Path, url: str, provider: str | None, model: str | None, out_dir: Path,
         effort: str | None = None) -> list[dict]:
+    """Ask every question in the file, print a line for each and a summary, and save the
+    results in out_dir (data/eval/)."""
     questions = parse(path.read_text(encoding="utf-8"))
     if not questions:
         raise SystemExit(f"No '## question' headings in {path}.")
@@ -105,6 +117,7 @@ def run(path: Path, url: str, provider: str | None, model: str | None, out_dir: 
     except httpx.HTTPError:
         raise SystemExit(f"No server at {url}. Start it with `acad serve` (or pass --url).")
 
+    # One line per question
     results = []
     for n, q in enumerate(questions, start=1):
         started = time.perf_counter()
@@ -119,9 +132,11 @@ def run(path: Path, url: str, provider: str | None, model: str | None, out_dir: 
         elif result["wrong"]:
             print(f"      mentions what it should not: {', '.join(result['wrong'])}")
 
+    # The totals, and the results saved for comparing runs
     passed = sum(r["passed"] for r in results)
     print(f"\n{passed}/{len(results)} passed · sources in the first search: "
-          f"{sum(r['source'] == 'seed' for r in results)}, found by a tool: {sum(r['source'] == 'tool' for r in results)}"
+          f"{sum(r['source'] == 'seed' for r in results)}, "
+          f"found by a tool: {sum(r['source'] == 'tool' for r in results)}"
           f" · average {sum(r['seconds'] for r in results) / len(results):.1f}s")
     out_dir.mkdir(parents=True, exist_ok=True)
     name = (f"{datetime.now():%Y%m%d-%H%M%S}-{provider or 'default'}{('-' + model) if model else ''}"

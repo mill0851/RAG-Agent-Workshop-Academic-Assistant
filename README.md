@@ -166,7 +166,8 @@ academic-assistant/
 ```
 
 Every folder has a README: the idea first, then the important code, then something to try. The
-three task folders end with their task. `config.py` reads `.env`.
+three task folders end with their task. Every folder also has an `architecture.mmd`, a Mermaid
+diagram of how its parts connect; its README says how to view it. `config.py` reads `.env`.
 
 ## How it works together
 

@@ -1,0 +1,39 @@
+%% tools/: how a model's request for a tool becomes text it can read.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    subgraph ASK["The model asks for a tool"]
+        G["Gemini<br/>a functionCall in its reply<br/>llm/gemini.py runs the loop"]
+        CC["Claude Code · Codex<br/>tools/call over MCP<br/>POST /mcp/session · mcp.py"]
+    end
+
+    CALL["toolbox.py · Toolbox.call(name, args)<br/>one Toolbox per question,<br/>which knows the chosen course"]
+    OK{"A tool by that name,<br/>with the right arguments?"}
+    ERR["The problem, as text<br/>so the model can try again"]
+
+    subgraph TOOLS["The tools in TOOLS · course.py, grades.py"]
+        SC["search_course(query)<br/>search by meaning"]
+        FT["find_text(text)<br/>every line with this exact text"]
+        RDOC["read_document(path)<br/>one whole document,<br/>only inside the chosen course"]
+        GR["grades(course)<br/>Task 2: your scores,<br/>once it is added to TOOLS"]
+    end
+
+    subgraph DATA["What they read"]
+        IDX[("index/ · Chroma")]
+        MD["Course folders<br/>the .md items"]
+        FACTS["facts.json<br/>exact dates, points, scores"]
+    end
+
+    BACK["Back to the model, as text<br/>and recorded in Toolbox.calls<br/>for Behind the answer"]
+    DUE["due_soon.py<br/>the next 14 days of deadlines:<br/>given to every question, not a tool"]
+
+    G --> CALL
+    CC --> CALL
+    CALL --> OK
+    OK -- "no" --> ERR --> BACK
+    OK -- "yes" --> TOOLS
+    SC --> IDX
+    FT --> MD
+    RDOC --> MD
+    GR --> FACTS
+    FACTS --> DUE
+    TOOLS -- "its result" --> BACK

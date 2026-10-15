@@ -1,0 +1,59 @@
+%% canvas/: from the Canvas API to one readable .md file per item.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    subgraph CANVAS["Canvas API · read-only GET requests"]
+        C1["Course<br/>name, syllabus HTML, description, your grade"]
+        C2["Tabs and modules<br/>which tabs exist, which module holds each item"]
+        C3["Pages, assignments, quizzes,<br/>announcements, discussions<br/>rich text as HTML"]
+        C4["Files list and folders<br/>name, folder, size, last change, download URL"]
+    end
+
+    subgraph SCRAPER["Scraper · canvas/"]
+        S1["One handler per tab<br/>tabs.py"]
+        S2{"Supported type, visible,<br/>under the size limit?"}
+        S3{"Changed since<br/>the last sync?"}
+        SKIP["Skipped"]
+        DL["Download the file · files.py<br/>raw bytes from the CDN, without the token"]
+    end
+
+    subgraph EXTRACT["Text extraction · course_files/extract.py"]
+        H["html_to_text()<br/>headings, lists and link targets kept,<br/>file access keys removed"]
+        F{"extract_file()<br/>by file type"}
+        PDF["PDF · pypdf<br/>one segment per page: p. 1, p. 2 …<br/>pages without text left out"]
+        PPT["PowerPoint · python-pptx<br/>one segment per slide: slide 1 …<br/>tables and speaker notes kept"]
+        DOC["Word · python-docx<br/>one unlabelled segment,<br/>headings and tables kept"]
+        TXT["Text, Markdown, CSV, HTML<br/>one unlabelled segment"]
+        SEG["Segments<br/>text + optional page or slide label"]
+    end
+
+    subgraph SAVE["Saving · canvas/context.py and course_files/items.py"]
+        E["emit()<br/>header: doc_id, type, title, Canvas link,<br/>module, last change"]
+        R["render_item()<br/>JSON header between --- lines<br/>the title as a heading<br/>a segment marker before each page or slide"]
+    end
+
+    subgraph DISK["Course folder · data/courses/Course (id)/"]
+        MD["One .md file per item<br/>pages/, assignments/, files/Lectures/L1.pdf.md …"]
+        ORIG["Originals<br/>.pdf, .docx, .pptx"]
+        FACTS["facts.json<br/>exact due dates, points, scores, grade"]
+    end
+
+    C1 --> S1
+    C2 --> S1
+    C3 --> S1
+    S1 -- "HTML" --> H
+    S1 -- "due dates, points, scores" --> FACTS
+    C4 --> S2
+    S2 -- "no" --> SKIP
+    S2 -- "yes" --> S3
+    S3 -- "no: reuse the saved text" --> SEG
+    S3 -- "yes" --> DL
+    DL --> F
+    DL -- "PDF, Word, PowerPoint" --> ORIG
+    F --> PDF & PPT & DOC & TXT
+    H --> SEG
+    PDF & PPT & DOC & TXT --> SEG
+    SEG --> E --> R
+    R -- "written only if it changed" --> MD
+
+    classDef labels stroke:#d97706,stroke-width:3px
+    class PDF,PPT,SEG,R labels

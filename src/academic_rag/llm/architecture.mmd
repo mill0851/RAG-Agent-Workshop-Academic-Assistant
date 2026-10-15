@@ -1,0 +1,36 @@
+%% llm/: one interface, three AIs. Gemini's tool loop runs in our code; Claude Code and Codex run their own.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    A["agent/ · ask()<br/>the system prompt, the prompt,<br/>the Toolbox and the effort"]
+    GP["base.py · get_provider()<br/>LLM_PROVIDER and LLM_MODEL in .env,<br/>or the Ask page's menu, from catalog.py"]
+
+    subgraph GEMINI["gemini.py · a web API: our code runs the loop"]
+        GEM["POST streamGenerateContent<br/>the prompts, the tools, thinkingLevel<br/>text streams to the page as it arrives"]
+        ASKED{"Did Gemini ask<br/>for tools?"}
+        RUN["Run each one with Toolbox.call()<br/>and send the results back"]
+        ROUNDS{"10 rounds of<br/>tools done?"}
+        LAST["One last request, with no tools:<br/>answer with what you found"]
+    end
+
+    subgraph CLI["claude.py · codex.py · agent programs: they run the loop"]
+        CLA["claude -p<br/>its own tools off,<br/>our system prompt from a file"]
+        COD["codex exec<br/>its shell off, a read-only sandbox,<br/>the instructions first in the prompt"]
+        RC["cli.py · run_cli()<br/>in an empty temporary folder,<br/>the prompt on stdin, JSON events back"]
+        MCP["Our tools over MCP<br/>POST /mcp/session · tools/mcp.py<br/>the same Toolbox.call()"]
+    end
+
+    EV["Events for the Ask page<br/>tool · note · text"]
+
+    A --> GP
+    GP -- "gemini" --> GEM
+    GP -- "claude" --> CLA
+    GP -- "codex" --> COD
+    GEM --> ASKED
+    ASKED -- "no: it answered" --> EV
+    ASKED -- "yes" --> RUN --> ROUNDS
+    ROUNDS -- "no" --> GEM
+    ROUNDS -- "yes" --> LAST --> EV
+    CLA --> RC
+    COD --> RC
+    RC <--> MCP
+    RC --> EV

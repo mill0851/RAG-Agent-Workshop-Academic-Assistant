@@ -5,7 +5,11 @@ so a fragment still says where it came from.
 
 CHUNK_CHARS is the target; the embedding model's limit is the hard cap. The model counts
 tokens, not characters, and math has more tokens per character than prose, so a chunk
-the model cannot read whole is cut in two until every piece fits (embedder.fits)."""
+the model cannot read whole is cut in two until every piece fits (embedder.fits).
+
+    chunk_document()   every chunk of one item, page by page, with its details
+    split_text()       one page's text as chunks of about `size` characters
+"""
 
 from __future__ import annotations
 
@@ -15,26 +19,30 @@ from dataclasses import dataclass
 
 from ..course_files import Document
 
-_HEADING = re.compile(r"^(#{1,6})\s+(.*)")
-_HEADING_ONLY = re.compile(r"^#{1,6}\s+[^\n]*$")
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_HEADING = re.compile(r"^(#{1,6})\s+(.*)")  # a Markdown heading, which names the section below it
+_HEADING_ONLY = re.compile(r"^#{1,6}\s+[^\n]*$")  # a chunk that is only a heading
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")  # the space after a . ! or ?
 _BREAKS = (re.compile(r"\n\s*\n"), _SENTENCE, re.compile(r"\n"), re.compile(r" "))  # best first
 
 
 @dataclass
 class Chunk:
+    """One piece of an item, ready to embed and store."""
+
     chunk_id: str
     text: str  # the text shown to the model
     embed_text: str  # header + text, what actually gets embedded
     metadata: dict
 
 
+# ---------------------------------------------------------- one page's text
 def split_text(text: str, size: int, overlap: int) -> list[tuple[str, str]]:
     """Split text into (chunk, section_heading) pairs of at most ~size chars,
     breaking on paragraph, then sentence, then word boundaries."""
     if size <= overlap:
         raise ValueError("chunk size must be larger than overlap")
 
+    # The paragraphs, each cut to fit, with the heading they are under
     units: list[tuple[str, str]] = []  # (text, heading in effect)
     heading = ""
     for para in re.split(r"\n\s*\n", text):
@@ -47,6 +55,7 @@ def split_text(text: str, size: int, overlap: int) -> list[tuple[str, str]]:
         for piece in _fit(para, size):
             units.append((piece, heading))
 
+    # Paragraphs packed into chunks; each new chunk starts with the end of the last one
     chunks: list[tuple[str, str]] = []
     cur, cur_heading = "", ""
     for unit, h in units:
@@ -87,6 +96,7 @@ def _fit(para: str, size: int) -> list[str]:
 
 
 def _hard_split(text: str, size: int) -> list[str]:
+    """Cut text with no sentence breaks at the last space before `size` (or at `size`)."""
     out = []
     while len(text) > size:
         cut = text.rfind(" ", 0, size)
@@ -107,6 +117,7 @@ def _tail(text: str, n: int) -> str:
     return tail[space + 1 :] if 0 <= space < len(tail) - 1 else tail
 
 
+# ------------------------------------------- fitting the model's 256 tokens
 def _shrink(header: str, text: str, fits: Callable[[str], bool] | None) -> list[str]:
     """Cut text in two, again and again, until the model can read each piece with its header."""
     if fits is None or fits(f"{header}\n{text}"):
@@ -128,13 +139,16 @@ def _halve(text: str) -> tuple[str, str]:
     return text[:mid].strip(), text[mid:].strip()
 
 
+# ----------------------------------------------------------------- one item
 def chunk_document(doc: Document, size: int, overlap: int,
                    fits: Callable[[str], bool] | None = None) -> list[Chunk]:
     """Chunks of about `size` characters; with `fits` (the embedder's), none longer than
-    the model can read."""
+    the model can read. Each page or slide is cut on its own, so a chunk never spans two,
+    and every chunk keeps its label in `location`."""
     chunks: list[Chunk] = []
     for seg in doc.segments:
         for text, section in split_text(seg.text, size, overlap):
+            # The header line: where the chunk came from, embedded with its text
             header = " > ".join(b for b in (doc.course_name, doc.module, doc.title) if b)
             if seg.label:
                 header += f" ({seg.label})"

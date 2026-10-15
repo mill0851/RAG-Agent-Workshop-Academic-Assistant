@@ -1,6 +1,10 @@
 """Step 3 of building the index: keep the vectors in Chroma, a vector database that
 runs inside this process and saves to data/chroma/. query() finds the chunks whose
-vectors are closest (by cosine similarity) to a question's vector."""
+vectors are closest (by cosine similarity) to a question's vector.
+
+    VectorStore    add, delete and find chunks; refuses vectors from another model
+    open_store()   the store in DATA_DIR
+"""
 
 from __future__ import annotations
 
@@ -12,19 +16,22 @@ import chromadb
 from ..config import Settings
 from .chunk import Chunk
 
+# The item types a search can be limited to (acad search --type, POST /search)
 SOURCE_TYPES = ["home", "syllabus", "module", "page", "assignment", "quiz",
                 "announcement", "discussion", "file", "upload"]
-COLLECTION = "course_materials"
-_HNSW = {"hnsw": {"space": "cosine"}}
-_BATCH = 500
+COLLECTION = "course_materials"  # the one Chroma collection that holds every chunk
+_HNSW = {"hnsw": {"space": "cosine"}}  # nearest by cosine similarity, not straight-line distance
+_BATCH = 500  # chunks per write to Chroma
 
 
 class IndexMismatch(RuntimeError):
-    pass
+    """The index was built with another embedder: its vectors cannot be compared."""
 
 
 @dataclass
 class Hit:
+    """One chunk a query found."""
+
     text: str
     score: float  # cosine similarity, higher is better
     metadata: dict
@@ -58,6 +65,7 @@ class VectorStore:
             COLLECTION, configuration=_HNSW, metadata={"embedder": self.embedder_name})
 
     def upsert(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
+        """Add chunks with their vectors, or replace the ones with the same ids."""
         for i in range(0, len(chunks), _BATCH):
             part = chunks[i : i + _BATCH]
             self._col.upsert(
@@ -69,13 +77,17 @@ class VectorStore:
             )
 
     def delete_doc(self, doc_id: str) -> None:
+        """Take every chunk of one item out of the index."""
         self._col.delete(where={"doc_id": doc_id})
 
     def delete_course(self, course_id: str) -> None:
+        """Take every chunk of one course out of the index."""
         self._col.delete(where={"course_id": course_id})
 
     def query(self, vector: list[float], k: int = 6, *, course_id: str | None = None,
               source_types: list[str] | None = None) -> list[Hit]:
+        """The k chunks nearest to a vector, nearest first, optionally only in one course
+        or of some types."""
         if self._col.count() == 0:
             return []
         clauses: list[dict] = []
@@ -92,13 +104,15 @@ class VectorStore:
             include=["documents", "metadatas", "distances"],
         )
         return [
-            Hit(text=d, score=1.0 - dist, metadata=m)
+            Hit(text=d, score=1.0 - dist, metadata=m)  # Chroma reports a distance: 1 - cosine similarity
             for d, m, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
         ]
 
     def count(self) -> int:
+        """How many chunks the index holds."""
         return self._col.count()
 
 
 def open_store(settings: Settings, embedder_name: str) -> VectorStore:
+    """The index in DATA_DIR/chroma/, for the embedder with this name."""
     return VectorStore(settings.index_dir, embedder_name)

@@ -19,21 +19,26 @@ from .cli import run_cli
 if TYPE_CHECKING:
     from ..tools import Toolbox
 
+# Every run: JSON events, a read-only sandbox, no git repository, nothing saved, no shell
 BASE = ["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
         "--disable", "shell_tool", "--disable", "unified_exec"]
 
 
 class CodexProvider:
+    """Answers with Codex, one `codex exec` run per question."""
+
     name = "codex"
 
     def __init__(self, model: str = "") -> None:
-        self.model = model
+        self.model = model  # "": the model in your Codex config
 
     def answer(self, system: str, prompt: str, tools: Toolbox, effort: str = "medium") -> Iterator[dict]:
+        """Run Codex once with our tools only, and turn what it prints into events."""
         args = [*BASE, "-c", f"model_reasoning_effort={effort}",
                 "-c", f'mcp_servers.acad.url="{tools.mcp_url}"',
                 *(["--model", self.model] if self.model else []), "-"]  # "-": the prompt comes on stdin
         last = None  # Codex may write short updates before its answer: only the last message is the answer
+
         for event in run_cli("codex", args, f"{system}\n\n{prompt}"):
             kind, item = event.get("type"), event.get("item") or {}
             if kind == "item.started" and item.get("type") == "mcp_tool_call":

@@ -12,6 +12,21 @@ course material, and lets it look further with tools until it can answer.
 | 2 | [prompts.py](prompts.py) | `build_prompt()`: that text, plus the tool list, the seed and the conversation |
 | 3 | [llm/](../llm/README.md) | A model answers, calling the tools in [tools/](../tools/README.md) when it needs more |
 
+## Architecture diagram
+
+[architecture.mmd](architecture.mmd) draws one turn: the request, the seed, the prompt, the answer
+with its tool calls, and the events the Ask page receives. It is a [Mermaid](https://mermaid.js.org)
+diagram: plain text that a Mermaid viewer draws as a flowchart. To see it:
+
+- **In VS Code:** install a Mermaid extension, such as *Mermaid Chart*, open `architecture.mmd`, and
+  open its preview.
+- **In a browser:** paste the file into the editor at https://mermaid.live.
+- **As an image file:** run this in this folder. The first run downloads a browser to draw with.
+
+  ```bash
+  npx -p @mermaid-js/mermaid-cli mmdc -i architecture.mmd -o architecture.svg
+  ```
+
 ## The idea
 
 ### A turn: seed, prompt, then the model with tools
@@ -69,6 +84,133 @@ Every answer ends with a **trace**: exactly what the model was told, what it was
 call with its result, and the time. On the Ask page it is the **Behind the answer** panel. When an
 answer is wrong, it shows why: either the right passage was never found (a search problem), or it
 was there and the model misread it (a prompt or model problem).
+
+## Inside one turn, step by step
+
+`ask()` in [agent.py](agent.py) runs one question from start to finish. The server calls it for
+every question the Ask page sends, with a fresh Toolbox that knows the chosen course:
+
+```
+POST /ask                                serve/agent_routes.py: a Toolbox for this question
+└── ask(question, tools, provider)       agent.py
+    1. gather()                          context.py: the seed
+         search()                          the 20 best-matching chunks (index/search.py)
+         small_to_big()                    each one widened to its whole document or page
+         due_soon()                        the next 14 days of deadlines (tools/due_soon.py)
+         course_file_list()                every item of the course, with its path
+       ──► yield "sources"
+    2. build_prompt()                    prompts.py: the prompt
+         system_prompt()                   system_prompt.md, notes removed, placeholders filled
+         the prompt itself                 files, deadlines, sources, conversation, question
+    3. provider.answer()                 llm/: the model answers
+         the model calls tools             Toolbox.call() runs each one (tools/toolbox.py)
+       ──► yield "tool", "note" and "text" while it works
+    ──► yield "trace", then "done"
+```
+
+**1. The seed.** `gather()` searches the index with the question. A follow-up like *"and which
+room?"* means little alone, so it is searched together with the conversation's first question,
+which names the topic. The 20 hits go through `small_to_big()`, which sends each document or page
+once, at the rank of its best fragment, until about 60,000 characters are in. Then come two exact lists
+that search would only approximate: the deadlines of the next 14 days from `facts.json`, and every
+item in the course with the path `read_document` opens.
+
+**2. The prompt.** The model gets two texts. The **system prompt** is the same for every question:
+the rules in [system_prompt.md](system_prompt.md), read fresh each time, so an edit applies to the
+next question. Its notes for people (`<!-- ... -->`) are removed, and three placeholders are
+filled in: `{tools}` with one line per tool, `{timezone}`, and `{now}`. The **prompt** is this
+question's material: the file list, the deadlines, the numbered sources, the conversation so far,
+and the question last.
+
+**3. The answer.** `provider.answer()` sends both texts to the AI you chose, with the tool list. The
+model answers, or asks for a tool; the tool runs, and its result goes back to the model, until it
+answers. For Gemini our own loop does this ([llm/gemini.py](../llm/gemini.py)), for at most 10
+rounds of tool calls. Claude Code and Codex run the loop themselves and reach the same tools over MCP
+([llm/](../llm/README.md)). Either way every call goes through `Toolbox.call()`, which keeps the
+tools inside the chosen course and records each call ([tools/](../tools/README.md)).
+
+**4. The trace.** When the answer is finished, `ask()` sends everything the model was told and
+everything it looked up, which the page shows as **Behind the answer**.
+
+### What the model is given, and where each part comes from
+
+| Part | Comes from | Its limit, and where to change it |
+|---|---|---|
+| Who it is, its rules, how to answer | [system_prompt.md](system_prompt.md) | Task 1: edit the file |
+| The tool list, `{tools}` | The first sentence of each tool's description (`Toolbox.specs()`) | `TOOLS` in [tools/toolbox.py](../tools/toolbox.py) |
+| The time zone and the time, `{timezone}` and `{now}` | `TIMEZONE` in `.env`, and the clock | |
+| The course's files | Every saved item in the course folder | `FILE_LIST_TITLES`: 200 items |
+| The upcoming deadlines | `facts.json`, saved by Sync ([tools/due_soon.py](../tools/due_soon.py)) | `DEADLINE_DAYS`: 14 |
+| The sources | `search()` over the index, then `small_to_big()` | `PASSAGES`: 20 hits. `WHOLE_DOCUMENT_CHARS` and `WHOLE_PAGE_CHARS`: 6,000 characters. `CONTEXT_CHARS`: 60,000 in all |
+| The conversation | The Ask page sends it with each question | `HISTORY_TURNS`: 20 messages. `HISTORY_CHARS`: 6,000 characters each |
+| The question | The Ask page | |
+
+The limits are at the top of [context.py](context.py) and [prompts.py](prompts.py).
+
+### A real prompt
+
+This is a follow-up question in the tests' made-up machine learning course, abridged. The system
+prompt is [system_prompt.md](system_prompt.md) without its notes, ending with:
+
+```
+Tools: the numbered sources are a first search: a sample of the course, not all of it. When they are not enough, use the tool that fits:
+- search_course: Search the course material by meaning and return the most relevant passages, each with its file path.
+- find_text: Find every line of the course material that contains this exact text (capitals and spaces are ignored), with its document, page and file path.
+- read_document: Read a whole course document (an assignment, a homework PDF, a lecture's slides, the syllabus) with its page labels.
+...
+The deadline list is exact and already in the student's time zone (America/Chicago). Right now it is Wednesday, October 14, 2026 10:00.
+```
+
+The prompt:
+
+```
+The course's files (open any of them with read_document and its path):
+- announcement: Midterm moved to Oct 28 | courses/Intro to Machine Learning (101)/announcements/2026-10-01-midterm-moved-to-oct-28-7001.md
+- file: lecture1.pdf | courses/Intro to Machine Learning (101)/files/Lectures/lecture1.pdf.md
+- syllabus: Intro to Machine Learning Syllabus | courses/Intro to Machine Learning (101)/syllabus.md
+...
+
+Upcoming deadlines, the next 14 days (exact, from Canvas):
+- 2026-10-19 23:59 · Intro to Machine Learning · Homework 2: Logistic Regression (assignment, submitted)
+
+Sources (a first search):
+[1] Midterm moved to Oct 28 | Intro to Machine Learning | announcement | score 0.39
+file: courses/Intro to Machine Learning (101)/announcements/2026-10-01-midterm-moved-to-oct-28-7001.md
+link: https://canvas.test.edu/courses/101/discussion_topics/7001
+The midterm exam is now on October 28 in Room 210.
+
+[2] Intro to Machine Learning Syllabus | Intro to Machine Learning | syllabus | score 0.07
+file: courses/Intro to Machine Learning (101)/syllabus.md
+link: https://canvas.test.edu/courses/101/assignments/syllabus
+## Grading
+
+Homework 40%, midterm 25%, final 35%. Late work loses 10% per day.
+...
+
+Conversation so far:
+Student: When is the midterm exam?
+
+Assistant: The midterm is on October 28 [1].
+
+Student: Which room is it in?
+```
+
+The answer is already in source [1], so the model can answer without calling a tool.
+
+### What a turn sends to the page
+
+`ask()` is a generator: it yields events while it works, and the server sends each one to the page
+as a line of JSON. The Ask page shows each one as it arrives:
+
+| Event | When | The Ask page |
+|---|---|---|
+| `sources` | After step 1 | Lists the sources under the answer, and names the AI that answers |
+| `tool` | Each time the model calls a tool | Adds a line, such as `find_text Room 210` |
+| `note` | When the model says what it is about to do (Codex does) | Adds that line, in italics |
+| `text` | Each piece of the answer, as it is written | Shows the answer so far, with math and links for `[1]` |
+| `trace` | At the end | Fills **Behind the answer**: the system prompt, the prompt, each tool call and its result |
+| `done` | Last | |
+| `error` | Instead, when the AI cannot answer (not installed, a bad key) | Shows the message. The server sends it, not `ask()` |
 
 ## Try it
 

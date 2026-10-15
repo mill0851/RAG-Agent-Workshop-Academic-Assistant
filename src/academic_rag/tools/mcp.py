@@ -8,8 +8,10 @@ answer. These are the only messages an agent needs:
     <- {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, ...}}
     -> {"jsonrpc": "2.0", "method": "notifications/initialized"}            (no id: nothing to answer)
     -> {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
-    <- {"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "search_course", "description": ..., "inputSchema": ...}]}}
-    -> {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "find_text", "arguments": {"text": "HW 3"}}}
+    <- {"jsonrpc": "2.0", "id": 2,
+        "result": {"tools": [{"name": "search_course", "description": ..., "inputSchema": ...}]}}
+    -> {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "find_text", "arguments": {"text": "HW 3"}}}
     <- {"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": "- HW3 2026.pdf (p. 1) ..."}]}}
 
 The server mounts this at POST /mcp/<session> (serve/agent_routes.py), one session per question.
@@ -20,7 +22,7 @@ from __future__ import annotations
 from .. import __version__
 from .toolbox import Toolbox
 
-PROTOCOL_VERSION = "2025-06-18"
+PROTOCOL_VERSION = "2025-06-18"  # the MCP version we answer with, when the agent does not say
 
 
 def handle(message: dict, box: Toolbox) -> dict | None:
@@ -28,6 +30,7 @@ def handle(message: dict, box: Toolbox) -> dict | None:
     if "id" not in message:
         return None
     method, params = message.get("method"), message.get("params") or {}
+
     if method == "initialize":
         result = {"protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION,
                   "capabilities": {"tools": {}},
@@ -36,7 +39,8 @@ def handle(message: dict, box: Toolbox) -> dict | None:
         result = {}
     elif method == "tools/list":
         # every tool only reads course material; saying so lets agents run them without asking
-        result = {"tools": [{"name": s["name"], "description": s["description"], "inputSchema": s["input_schema"],
+        result = {"tools": [{"name": s["name"], "description": s["description"],
+                             "inputSchema": s["input_schema"],
                              "annotations": {"readOnlyHint": True, "openWorldHint": False}}
                             for s in box.specs()]}
     elif method == "tools/call":

@@ -25,19 +25,22 @@ from .store import VectorStore
 
 log = logging.getLogger(__name__)
 
-ProgressFn = Callable[[str, int, int], None]
+ProgressFn = Callable[[str, int, int], None]  # progress(message, done, total), for the Courses page
 
 
 @dataclass
 class EmbedStats:
-    new: int = 0
-    updated: int = 0
-    unchanged: int = 0
-    removed: int = 0
+    """What one embed did: what `acad embed` prints and POST /embed returns."""
+
+    new: int = 0  # items embedded for the first time
+    updated: int = 0  # items embedded again because they changed
+    unchanged: int = 0  # items skipped: the same as last time
+    removed: int = 0  # items taken out of the index: gone from the course folders
     chunks_written: int = 0
-    by_type: dict = field(default_factory=dict)
+    by_type: dict = field(default_factory=dict)  # items embedded per type ("page": 3, ...)
 
     def summary(self) -> str:
+        """One line: "3 new, 1 updated, 40 unchanged, 0 removed; 25 chunks embedded"."""
         return (f"{self.new} new, {self.updated} updated, {self.unchanged} unchanged, "
                 f"{self.removed} removed; {self.chunks_written} chunks embedded")
 
@@ -63,6 +66,7 @@ def embed_courses(
     stats = EmbedStats()
     wanted = {str(c) for c in course_ids or []}
 
+    # 1. The course folders to embed (all of them, or the ones asked for)
     dirs: list[tuple[Path, dict]] = []
     for d in CourseStore(settings.courses_dir).course_dirs():
         meta = read_json(d / "course.json") or {}
@@ -76,6 +80,7 @@ def embed_courses(
             log.info("uploads folder of %s: added %s, removed %s", d.name, dropped["added"], dropped["removed"])
         dirs.append((d, meta))
 
+    # 2. What is in the index already, or nothing for a rebuild
     manifest = load_manifest(settings.manifest_path)
     if rebuild and not wanted:  # full rebuild: also the way to switch embedding backends
         store.reset()
@@ -90,10 +95,11 @@ def embed_courses(
     total = sum(count_markdown(d) for d, _ in dirs)
     done = 0
     seen: set[str] = set()
-    pending: list[tuple[Document, list[Chunk], bool]] = []
+    pending: list[tuple[Document, list[Chunk], bool]] = []  # (item, its chunks, already in the index)
     pending_chunks = 0
 
     def flush() -> None:
+        """Embed the pending items' chunks in one batch, store them, and save the manifest."""
         nonlocal pending, pending_chunks
         if not pending:
             return
@@ -117,6 +123,7 @@ def embed_courses(
         write_json(settings.manifest_path, manifest)  # progress survives an interrupted run
         pending, pending_chunks = [], 0
 
+    # 3. Every item: unchanged ones are skipped, the rest are chunked and embedded in batches
     for cdir, meta in dirs:
         for doc in iter_documents(cdir, settings.data_dir, meta.get("name")):
             done += 1
@@ -139,7 +146,7 @@ def embed_courses(
                 flush()
     flush()
 
-    # Prune: items whose file is gone, and (on a full run) whole courses whose folder is gone.
+    # 4. Prune: items whose file is gone, and (on a full run) whole courses whose folder is gone.
     scanned = {str(m["id"]) for _, m in dirs}
     for doc_id, m in list(manifest.items()):
         gone = doc_id not in seen and m["course_id"] in scanned

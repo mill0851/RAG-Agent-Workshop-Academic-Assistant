@@ -24,7 +24,7 @@ from ..config import REASONING_LEVELS, Settings
 if TYPE_CHECKING:
     from ..tools import Toolbox
 
-PROVIDERS = ("gemini", "claude", "codex")
+PROVIDERS = ("gemini", "claude", "codex")  # the AIs that can answer, as LLM_PROVIDER names them
 EFFORTS = REASONING_LEVELS  # how hard the model thinks: the Ask page's menu; REASONING_LEVEL picks the default
 MODEL_NAME = re.compile(r"^[\w.:\-\[\]/]{1,100}$")  # model names reach a command line: nothing else allowed
 
@@ -34,10 +34,14 @@ class ProviderError(RuntimeError):
 
 
 class Provider(Protocol):
+    """What every provider has: a name, a model ("" for its default), and answer()."""
+
     name: str
     model: str
 
-    def answer(self, system: str, prompt: str, tools: Toolbox, effort: str = "medium") -> Iterator[dict]: ...
+    def answer(self, system: str, prompt: str, tools: Toolbox, effort: str = "medium") -> Iterator[dict]:
+        """Answer one question, yielding tool, note and text events while the model works."""
+        ...
 
 
 def get_provider(settings: Settings, name: str | None = None, model: str | None = None) -> Provider:
@@ -52,6 +56,7 @@ def get_provider(settings: Settings, name: str | None = None, model: str | None 
     model = model or ""
     if model and not MODEL_NAME.match(model):
         raise ProviderError(f"Not a valid model name: {model!r}")
+
     if name == "gemini":
         if not settings.gemini_api_key:
             raise ProviderError("Gemini needs GEMINI_API_KEY in .env "

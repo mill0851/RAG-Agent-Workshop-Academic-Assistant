@@ -18,6 +18,8 @@ CANDIDATES_PER_RESULT = 3  # fetch 3x what we return, so a reranker has somethin
 
 @dataclass
 class Passage:
+    """One search result, ready to show and to cite."""
+
     n: int  # citation number, 1-based within one search
     title: str
     course: str
@@ -31,9 +33,11 @@ class Passage:
     text: str
 
     def to_dict(self) -> dict:
+        """As a plain dict, for JSON."""
         return asdict(self)
 
 
+# ------------------------------------------------------------------- search
 def search(
     store: VectorStore,
     embedder: Embedder,
@@ -43,6 +47,8 @@ def search(
     course_id: str | None = None,
     source_types: list[str] | None = None,
 ) -> list[Passage]:
+    """The k best passages for a question (at most 20), numbered from 1: in one course, or
+    of some types, if asked."""
     query = (query or "").strip()
     if not query:
         return []
@@ -78,6 +84,7 @@ def boost_exact_matches(query: str, passages: list[Passage]) -> list[Passage]:
 
 
 def _passage(h: Hit) -> Passage:
+    """A chunk the store found, as a Passage (numbered later)."""
     m = h.metadata
     return Passage(
         n=0, title=m.get("title", ""), course=m.get("course_name", ""), course_id=m.get("course_id", ""),
@@ -86,6 +93,7 @@ def _passage(h: Hit) -> Passage:
     )
 
 
+# ------------------------------------------------------------------ helpers
 def resolve_course(courses: list[dict], spec: str) -> tuple[str | None, str | None]:
     """Turn a course id or part of a course name into an id, using the entries from
     course_files.list_courses(). Returns (course_id, problem); exactly one is None."""
@@ -109,7 +117,8 @@ def format_passages(passages: list[Passage], max_chars: int | None = None, numbe
     for p in passages:
         where = " > ".join(x for x in (p.course, p.module) if x)
         title = f"{p.title} ({p.location})" if p.location else p.title
-        body = p.text if max_chars is None or len(p.text) <= max_chars else p.text[:max_chars].rsplit(" ", 1)[0] + " ..."
+        body = (p.text if max_chars is None or len(p.text) <= max_chars
+                else p.text[:max_chars].rsplit(" ", 1)[0] + " ...")  # cut at a word, for the CLI
         link = f"\nlink: {p.url}" if p.url else ""
         mark = f"[{p.n}]" if numbered else "-"
         blocks.append(f"{mark} {title} | {where} | {p.type} | score {p.score:.2f}\nfile: {p.path}{link}\n{body}")

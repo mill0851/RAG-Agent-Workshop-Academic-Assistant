@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import re
 
-_GENERIC = {"course", "class", "untitled", "untitled course", "new course", "sandbox", "template"}
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_GENERIC = {"course", "class", "untitled", "untitled course", "new course", "sandbox", "template"}  # not names
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")  # the space after a . ! or ?
 
 
+# ----------------------------------------------------------------- the name
 def looks_like_id(s: str | None) -> bool:
     """True for names that are really just numbers/codes, e.g. '93756976'."""
     s = (s or "").strip()
@@ -21,11 +22,12 @@ def looks_like_id(s: str | None) -> bool:
         return True
     if re.fullmatch(r"[\W_]*\d[\d\W_]*", s):  # digits and punctuation only
         return True
-    return bool(re.fullmatch(r"(course|class)?[\s_-]*\d{4,}", s, re.I))
+    return bool(re.fullmatch(r"(course|class)?[\s_-]*\d{4,}", s, re.I))  # "Course 12345"
 
 
 def syllabus_title(syllabus_text: str) -> str | None:
-    """A title from the syllabus' own heading, e.g. '# Organic Chemistry I Syllabus'."""
+    """A title from the syllabus' own heading, e.g. '# Organic Chemistry I Syllabus' gives
+    'Organic Chemistry I'. Only the first six lines are looked at."""
     seen = 0
     for line in syllabus_text.splitlines():
         line = line.strip()
@@ -36,9 +38,9 @@ def syllabus_title(syllabus_text: str) -> str | None:
             break
         if not (line.startswith("#") or re.search(r"syllabus", line, re.I)):
             continue
-        title = re.sub(r"^#+\s*", "", line)
-        title = re.sub(r"\bcourse\s+syllabus\b|\bsyllabus\b", "", title, flags=re.I)
-        title = re.sub(r"^[\s:\-–—|]+|[\s:\-–—|]+$", "", title)
+        title = re.sub(r"^#+\s*", "", line)  # the heading marks
+        title = re.sub(r"\bcourse\s+syllabus\b|\bsyllabus\b", "", title, flags=re.I)  # the word itself
+        title = re.sub(r"^[\s:\-–—|]+|[\s:\-–—|]+$", "", title)  # punctuation left at either end
         if 4 <= len(title) <= 90 and not looks_like_id(title):
             return title
     return None
@@ -60,7 +62,9 @@ def resolve_course_name(
     return f"Course {course_id}", "id"
 
 
+# -------------------------------------------------------------- the summary
 def _prose_paragraphs(text: str) -> list[str]:
+    """The paragraphs of real sentences: not headings, lists, tables, contact details or links."""
     out = []
     for para in re.split(r"\n\s*\n", text):
         para = " ".join(para.split())
@@ -73,6 +77,7 @@ def _prose_paragraphs(text: str) -> list[str]:
 
 
 def _cut(text: str, limit: int) -> str:
+    """At most `limit` characters, cut after a whole sentence when possible."""
     if len(text) <= limit:
         return text
     kept = ""
@@ -84,6 +89,7 @@ def _cut(text: str, limit: int) -> str:
 
 
 def summary_inputs_hash(description: str, syllabus_text: str, module_names: list[str]) -> str:
+    """A fingerprint of the text a summary is made from: when that text changes, so does this."""
     h = hashlib.sha256()
     for part in (description, syllabus_text, "\n".join(module_names)):
         h.update(part.encode("utf-8", "replace"))
@@ -102,12 +108,13 @@ def extractive_summary(
     paras = [description] if has_description else _prose_paragraphs(syllabus_text)
 
     prose = ""
-    for para in paras:
+    for para in paras:  # whole paragraphs, until about 60% of the space is used
         prose = f"{prose} {para}".strip()
         if len(prose) >= max_chars * 0.6:
             break
     prose = _cut(prose, max_chars) if prose else ""
 
+    # "Week 3: Integration by Parts" becomes the topic "Integration by Parts"
     topics = [re.sub(r"^(week|unit|module)\s*\d+\s*[:.\-–]\s*", "", m, flags=re.I).strip() for m in module_names]
     topics = [t[:40] for t in topics if t][:6]
     topic_text = f"Topics: {'; '.join(topics)}." if topics else ""

@@ -14,6 +14,22 @@ project never cares which AI is answering. [agent/](../agent/README.md) calls it
 | [cli.py](cli.py) | Runs either program once and reads the events it prints |
 | [catalog.py](catalog.py) | The models the Ask page's menu offers, and whether each works on this computer |
 
+## Architecture diagram
+
+[architecture.mmd](architecture.mmd) draws how `get_provider()` picks an AI, Gemini's tool loop in
+our own code, and how Claude Code and Codex run their own loop with our tools over MCP. It is a
+[Mermaid](https://mermaid.js.org) diagram: plain text that a Mermaid viewer draws as a flowchart. To
+see it:
+
+- **In VS Code:** install a Mermaid extension, such as *Mermaid Chart*, open `architecture.mmd`, and
+  open its preview.
+- **In a browser:** paste the file into the editor at https://mermaid.live.
+- **As an image file:** run this in this folder. The first run downloads a browser to draw with.
+
+  ```bash
+  npx -p @mermaid-js/mermaid-cli mmdc -i architecture.mmd -o architecture.svg
+  ```
+
 ## The idea
 
 **One method.** Every provider has `answer(system, prompt, tools, effort)`, which yields the same
@@ -67,6 +83,58 @@ messages that the server answers ([tools/mcp.py](../tools/mcp.py)):
 Each question gets its own MCP address with an unguessable token, closed when the answer ends. So
 every AI sees the same material through the same tools, and none can read anything outside your
 course folders.
+
+## Inside one answer, step by step
+
+`agent.ask()` calls `provider.answer(system, prompt, tools, effort)` once per question. Which
+provider that is comes from `get_provider()` in [base.py](base.py): the AI picked on the Ask page,
+or `LLM_PROVIDER` and `LLM_MODEL` in `.env`.
+
+### Gemini: our loop, in gemini.py
+
+```
+answer()
+for up to 11 requests:
+1. POST .../models/<model>:streamGenerateContent    the system prompt, the conversation so far,
+                                                    the tool list, and the effort as thinkingLevel
+2. read the streamed answer                         text goes to the page as it arrives
+3. no tool requested?                               done: that was the answer
+4. run each requested tool                          Toolbox.call(), then its result goes back
+5. after 10 rounds of tools                         one last request with no tools: answer now
+```
+
+**Sent back unchanged.** Gemini's own turn, including its hidden `thoughtSignature`s, is sent back
+exactly as it came. Gemini needs that to continue its reasoning after a tool result.
+
+**When Google is busy.** A 429 (over the per-minute quota) or 503 (overloaded) is retried up to 4
+times, waiting as long as Google asks, at most a minute. A request that sends nothing for 120
+seconds gives up with a message to pick another model. The API key goes in a header, never in the
+address, so it cannot end up in a log.
+
+### Claude Code and Codex: their loop, our tools
+
+Both are agent programs on your computer. `run_cli()` in [cli.py](cli.py) starts one per question,
+in an empty temporary folder, sends the prompt on stdin, and reads the JSON events it prints:
+
+| | Claude Code ([claude.py](claude.py)) | Codex ([codex.py](codex.py)) |
+|---|---|---|
+| Command | `claude -p --output-format stream-json` | `codex exec --json` |
+| Its own tools | Off: `--tools ""` | Off: no shell, a read-only sandbox |
+| Our tools | `--mcp-config mcp.json`, the question's MCP address | `-c mcp_servers.acad.url=...` |
+| The system prompt | A file: `--system-prompt-file system.txt` | First in the prompt: Codex has no flag for it |
+| Effort | `--effort medium` or `high` | `-c model_reasoning_effort=...` |
+| Text | Streamed word by word | Each message whole: the last one is the answer, earlier ones become notes |
+
+If the page is closed mid-answer, `run_cli()` stops the program. If it exits with an error, its last
+lines become the message on the Ask page.
+
+### What each provider sends the page
+
+| Event | Gemini | Claude Code | Codex |
+|---|---|---|---|
+| `tool` | Each tool it asks for | Each `tool_use` in its messages | Each MCP tool call it starts |
+| `note` | | | A message it wrote before a tool call |
+| `text` | As it arrives | As it is written | The final message, whole |
 
 ## Try it
 

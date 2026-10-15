@@ -1,3 +1,5 @@
+/* The stylesheet of the three pages. Colors are variables, redefined below for dark mode. */
+
 :root {
   --bg: #f7f7f5;
   --surface: #ffffff;
@@ -26,6 +28,7 @@
   }
 }
 
+/* --- The page: text, links, headings */
 * { box-sizing: border-box; }
 
 body {
@@ -40,6 +43,7 @@ h2 { font-size: 1.05rem; margin: 1.5rem 0 0.6rem; }
 .muted { color: var(--muted); }
 [hidden] { display: none !important; }
 
+/* --- The top bar and its links to the three pages */
 .top {
   display: flex;
   align-items: center;
@@ -54,6 +58,7 @@ h2 { font-size: 1.05rem; margin: 1.5rem 0 0.6rem; }
 
 main { max-width: 980px; margin: 0 auto; padding: 1rem; }
 
+/* --- Panels and bars: the boxes the pages are made of */
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -66,6 +71,7 @@ main { max-width: 980px; margin: 0 auto; padding: 1rem; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.8rem; }
 .bar p { margin: 0; }
 
+/* --- Buttons and form fields */
 button {
   font: inherit;
   padding: 0.4rem 0.9rem;
@@ -87,6 +93,7 @@ input, select {
   color: var(--text);
 }
 
+/* --- Courses page: the course cards, the upload box, the table of items */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.8rem; }
 .card {
   display: flex;
@@ -130,6 +137,7 @@ td.links > * { margin-left: 0.7rem; }
 
 ul.plain { margin: 0; padding-left: 1.1rem; }
 
+/* --- Search page: the form and the results */
 .search { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .search input { flex: 1 1 280px; }
 
@@ -144,6 +152,7 @@ ul.plain { margin: 0; padding-left: 1.1rem; }
 .result .passage { white-space: pre-wrap; margin: 0.5rem 0; }
 .result .links > * { margin-right: 1rem; }
 
+/* --- Small screens */
 @media (max-width: 600px) {
   td.links { white-space: normal; text-align: left; }
 }

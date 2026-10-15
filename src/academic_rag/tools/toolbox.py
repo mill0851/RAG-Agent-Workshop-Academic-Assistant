@@ -24,10 +24,13 @@ RESULT_PREVIEW = 1500  # characters of each result kept for "Behind the answer"
 
 
 class Toolbox:
+    """One question's tools: the course they work in, the data they read (the settings,
+    the index and its embedder), and a record of every call."""
+
     def __init__(self, settings: Settings, store: VectorStore, embedder: Embedder, *,
                  course_id: str | None = None, tools: list[Tool] | None = None) -> None:
         self.settings, self.store, self.embedder = settings, store, embedder
-        self.course_id = course_id
+        self.course_id = course_id  # None: "All courses" on the Ask page
         self.tools = {t.name: t for t in (TOOLS if tools is None else tools)}
         self.calls: list[dict] = []  # every call, for the trace
         self.mcp_url = ""  # where Claude Code and Codex reach these tools (set by the server)
@@ -55,6 +58,8 @@ class Toolbox:
             result = f"{name} is not built yet."
         except Exception as exc:  # a tool failing must not end the answer
             result = f"{name} failed: {type(exc).__name__}: {exc}"
+
+        # The record that "Behind the answer" shows: a preview of the result, its size and time
         self.calls.append({"name": name, "args": args, "result": result[:RESULT_PREVIEW],
                            "chars": len(result), "ms": round((time.perf_counter() - start) * 1000)})
         return result

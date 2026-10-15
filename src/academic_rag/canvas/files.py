@@ -1,6 +1,16 @@
-"""Course files: download each PDF, Word file, slide deck or text file, keep the
-original next to its extracted text, and skip the download when Canvas says the file
-has not changed since the last sync."""
+"""Course files: download each PDF, Word file, slide deck or text file, save its text for
+search, and keep the original next to it. A file is downloaded again only when Canvas
+says it changed since the last sync.
+
+    files()          the Files tab: GET .../files lists every file, with a download URL
+    linked_files()   the Files tab is hidden: GET .../files/:id for each file the course
+                     links to from its modules, pages and assignments
+
+For lecture1.pdf in the Canvas folder "Lectures", the course folder gets:
+
+    files/Lectures/lecture1.pdf      the original (only for PDF, Word and PowerPoint)
+    files/Lectures/lecture1.pdf.md   its text, one segment per page: what gets indexed
+"""
 
 from __future__ import annotations
 
@@ -8,13 +18,14 @@ import logging
 from pathlib import PurePosixPath
 
 from ..course_files import (
-    EXTRACTOR_VERSION, SUPPORTED_EXTENSIONS, extract_file, read_document, read_meta, safe_name, write_bytes,
+    EXTRACTOR_VERSION, SUPPORTED_EXTENSIONS, Segment, extract_file, read_document, read_meta, safe_name,
+    write_bytes,
 )
 from .context import CourseContext, optional
 
 log = logging.getLogger(__name__)
 
-BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx"}  # originals are kept next to their extracted text
+BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx"}  # originals kept next to their text (others: the text only)
 
 
 def files(ctx: CourseContext) -> None:
@@ -23,66 +34,98 @@ def files(ctx: CourseContext) -> None:
 
 
 def linked_files(ctx: CourseContext) -> None:
-    """Files the course links to from Modules, pages and assignments, fetched one by one
-    (many courses hide the Files tab but still link to files)."""
-    found = (optional(lambda i=i: ctx.client.get_file(ctx.cid, i), f"file {i}", None)
-             for i in sorted(ctx.linked_files, key=int))
+    """The files the course links to from its modules, pages and assignments, fetched one by
+    one. Many courses hide the Files tab but still share files this way."""
+    found = [optional(lambda i=i: ctx.client.get_file(ctx.cid, i), f"file {i}", None)
+             for i in sorted(ctx.linked_files, key=int)]
     _save_files(ctx, [f for f in found if f])
 
 
 def _save_files(ctx: CourseContext, files: list[dict]) -> None:
+    """Save each file Canvas listed: skip, reuse or download it, then save its text."""
+    # The Canvas folders, by id: each file names its folder by id ("folder_id")
     folders = {f["id"]: f for f in optional(lambda: ctx.client.list_folders(ctx.cid), "folders", [])}
-    claimed: set[str] = set()
+    taken: set[str] = set()  # local paths already used in this run, in lowercase
 
     for f in files:
-        fid = f["id"]
-        name = safe_name(f.get("display_name") or f.get("filename") or str(fid), 120)
+        name = safe_name(f.get("display_name") or f.get("filename") or str(f["id"]), 120)
         ext = PurePosixPath(name.lower()).suffix
-        if ext not in SUPPORTED_EXTENSIONS:
-            continue
-        if f.get("locked") or f.get("hidden") or f.get("locked_for_user") or f.get("hidden_for_user"):
-            continue
-        if (f.get("size") or 0) > ctx.max_file_bytes:
-            log.info("skipping %s (%.1f MB is over the size limit)", name, f["size"] / 1e6)
+        if _skip(ctx, f, name, ext):
             continue
 
-        parts = ((folders.get(f.get("folder_id")) or {}).get("full_name") or "").split("/")[1:]
-        directory = "/".join(["files", *(safe_name(p) for p in parts if p)])
-        rel = f"{directory}/{name}"
-        if rel.lower() in claimed:  # two names that sanitize to the same thing
-            rel = f"{directory}/{PurePosixPath(name).stem}-{fid}{ext}"
-        claimed.add(rel.lower())
-        md_rel = rel + ".md"
-        orig_rel = rel if ext in BINARY_EXTENSIONS else None
-
+        path = _local_path(f, name, ext, folders, taken)  # files/Lectures/lecture1.pdf
+        text_path = path + ".md"  # its text: what gets indexed
+        original = path if ext in BINARY_EXTENSIONS else None  # the original is kept for these
         updated = f.get("modified_at") or f.get("updated_at") or ""
-        module = ctx.module_of.get(f"file:{fid}", "")
-        prev = read_meta(ctx.cdir / md_rel)
-        fresh = bool(
-            prev and prev.get("canvas_id") == str(fid) and prev.get("updated_at") == updated
-            and prev.get("extractor") == EXTRACTOR_VERSION
-            and (orig_rel is None or (ctx.cdir / orig_rel).exists())
-        )
-        if fresh:  # unchanged in Canvas: reuse what is on disk, no download
-            old = read_document(ctx.cdir / md_rel, ctx.data_root)
-            segments, no_text = (old.segments if old else []), bool(prev.get("no_text"))
-        else:
-            data = optional(lambda f=f: ctx.client.download(f["url"], ctx.max_file_bytes), f"file {name}", None)
-            if data is None:
-                if (ctx.cdir / md_rel).exists():  # could not refresh; keep the last copy
-                    ctx.keep["files"].update({md_rel, *([orig_rel] if orig_rel else [])})
-                continue
-            ctx.downloads += 1
-            if orig_rel:
-                write_bytes(ctx.cdir / orig_rel, data)
-            segments = extract_file(name, data)
-            no_text = not segments
-            if no_text:
-                log.info("no extractable text in %s (scanned PDF?)", name)
 
-        ctx.emit("files", md_rel, "file", fid, name, f"{ctx.base}/courses/{ctx.cid}/files/{fid}",
-                 segments, updated, module,
+        previous = read_meta(ctx.cdir / text_path)  # what the last sync saved, if anything
+        if _unchanged(ctx, previous, f["id"], updated, original):
+            # Unchanged in Canvas: reuse the text on disk instead of downloading again.
+            old = read_document(ctx.cdir / text_path, ctx.data_root)
+            segments, no_text = (old.segments if old else []), bool(previous.get("no_text"))
+        else:
+            downloaded = _download(ctx, f, name, original)
+            if downloaded is None:
+                if (ctx.cdir / text_path).exists():  # could not download it again: keep the last copy
+                    ctx.keep["files"].update({text_path, *([original] if original else [])})
+                continue
+            segments, no_text = downloaded
+
+        ctx.emit("files", text_path, kind="file", canvas_id=f["id"], title=name,
+                 url=f"{ctx.base}/courses/{ctx.cid}/files/{f['id']}",  # a Canvas link, not the download URL
+                 content=segments, updated=updated, module=ctx.module_for("file", f["id"]),
                  extra={"extractor": EXTRACTOR_VERSION, "no_text": no_text, "size": f.get("size")},
-                 allow_empty=True)
-        if orig_rel:
-            ctx.keep["files"].add(orig_rel)
+                 allow_empty=True)  # a scanned PDF has no text, but is still listed
+        if original:
+            ctx.keep["files"].add(original)
+
+
+def _skip(ctx: CourseContext, f: dict, name: str, ext: str) -> bool:
+    """True for a file we cannot or should not save: a type we cannot read (a .zip), a file
+    locked or hidden from students, or one over the size limit."""
+    if ext not in SUPPORTED_EXTENSIONS:
+        return True
+    if f.get("locked") or f.get("hidden") or f.get("locked_for_user") or f.get("hidden_for_user"):
+        return True
+    if (f.get("size") or 0) > ctx.max_file_bytes:
+        log.info("skipping %s (%.1f MB is over the size limit)", name, f["size"] / 1e6)
+        return True
+    return False
+
+
+def _local_path(f: dict, name: str, ext: str, folders: dict, taken: set[str]) -> str:
+    """Where a file goes in the course folder: files/<its Canvas folder>/<its name>.
+    Canvas folder paths start with "course files", which is left out."""
+    parts = ((folders.get(f.get("folder_id")) or {}).get("full_name") or "").split("/")[1:]
+    directory = "/".join(["files", *(safe_name(p) for p in parts if p)])
+    path = f"{directory}/{name}"
+    if path.lower() in taken:  # two Canvas names that become the same file name: add the id
+        path = f"{directory}/{PurePosixPath(name).stem}-{f['id']}{ext}"
+    taken.add(path.lower())
+    return path
+
+
+def _unchanged(ctx: CourseContext, previous: dict | None, file_id, updated: str, original: str | None) -> bool:
+    """True when the saved copy is still good: the same Canvas file, not modified since,
+    extracted by the current extractor, and its original still on disk."""
+    return bool(
+        previous and previous.get("canvas_id") == str(file_id) and previous.get("updated_at") == updated
+        and previous.get("extractor") == EXTRACTOR_VERSION
+        and (original is None or (ctx.cdir / original).exists())
+    )
+
+
+def _download(ctx: CourseContext, f: dict, name: str, original: str | None) -> tuple[list[Segment], bool] | None:
+    """Download a file, save the original, and extract its text: (segments, no_text).
+    None when it could not be downloaded (hidden, or larger than the limit)."""
+    # f["url"] is a Canvas address that redirects to the CDN holding the file
+    data = optional(lambda: ctx.client.download(f["url"], ctx.max_file_bytes), f"file {name}", None)
+    if data is None:
+        return None
+    ctx.downloads += 1
+    if original:
+        write_bytes(ctx.cdir / original, data)
+    segments = extract_file(name, data)  # one segment per page or slide, labelled "p. 3", "slide 5"
+    if not segments:
+        log.info("no extractable text in %s (scanned PDF?)", name)
+    return segments, not segments

@@ -11,6 +11,11 @@ the embedder and the front end need.
     <!-- segment: p. 1 -->
 
     Work done by a constant force ...
+
+    write_item()       save an item, only when it changed
+    read_meta()        just the header of an item
+    read_document()    a whole item back: its header and its labelled Segments
+    iter_documents()   every item in a course folder
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ from pathlib import Path
 from .extract import Segment
 from .folders import write_bytes
 
-_SEGMENT = re.compile(r"^<!-- segment: (.*?) -->[ \t]*$", re.M)
+_SEGMENT = re.compile(r"^<!-- segment: (.*?) -->[ \t]*$", re.M)  # the marker before each page or slide
 
 
 @dataclass
@@ -45,10 +50,12 @@ class Document:
 
     @property
     def text(self) -> str:
+        """All of its text, the Segments joined by blank lines."""
         return "\n\n".join(s.text for s in self.segments if s.text.strip())
 
     @property
     def content_hash(self) -> str:
+        """A fingerprint of what gets embedded: when it changes, the item is embedded again."""
         h = hashlib.sha256()
         for part in (self.course_name, self.title, self.url, self.module, self.text):
             h.update(part.encode("utf-8", "replace"))
@@ -56,7 +63,10 @@ class Document:
         return h.hexdigest()
 
 
+# ------------------------------------------------------------------ writing
 def render_item(meta: dict, segments: list[Segment]) -> str:
+    """The text of an item file: the header, the title as a heading, then each Segment,
+    with a marker before each one that has a label."""
     parts = []
     for seg in segments:
         text = seg.text.strip()
@@ -80,7 +90,9 @@ def write_item(path: Path, meta: dict, segments: list[Segment]) -> bool:
     return True
 
 
+# ------------------------------------------------------------------ reading
 def _split(text: str) -> tuple[dict, str]:
+    """An item file's text as (its header, the rest). ValueError if it has no header."""
     if not text.startswith("---\n"):
         raise ValueError("missing header")
     end = text.index("\n---\n", 4)
@@ -88,6 +100,7 @@ def _split(text: str) -> tuple[dict, str]:
 
 
 def read_meta(path: Path) -> dict | None:
+    """Just an item's header, or None for a file that is not one of our items."""
     try:
         return _split(path.read_text(encoding="utf-8"))[0]
     except (OSError, ValueError):  # missing, binary (a PDF original), or not one of ours
@@ -103,11 +116,12 @@ def read_document(path: Path, data_root: Path, course_name: str | None = None) -
         return None
     if "doc_id" not in meta:
         return None
+
+    # The body without its title heading, cut at the segment markers
     title = meta.get("title", "")
     body = body.strip()
     if body.startswith(f"# {title}"):
         body = body[len(f"# {title}") :].strip()
-
     parts = _SEGMENT.split(body)  # [pre, label1, text1, label2, text2, ...]
     segments = [Segment(parts[0].strip())] if parts[0].strip() else []
     for label, text in zip(parts[1::2], parts[2::2]):
@@ -133,6 +147,7 @@ def read_document(path: Path, data_root: Path, course_name: str | None = None) -
 
 
 def iter_documents(course_dir: Path, data_root: Path, course_name: str | None = None) -> Iterator[Document]:
+    """Every item in a course folder, in path order (files that are not items are skipped)."""
     for path in sorted(course_dir.rglob("*.md")):
         doc = read_document(path, data_root, course_name)
         if doc is not None:
@@ -140,4 +155,5 @@ def iter_documents(course_dir: Path, data_root: Path, course_name: str | None = 
 
 
 def count_markdown(course_dir: Path) -> int:
+    """How many .md files a course folder holds (for progress: "12 of 340")."""
     return sum(1 for _ in course_dir.rglob("*.md"))

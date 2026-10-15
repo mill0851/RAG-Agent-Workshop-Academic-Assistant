@@ -24,6 +24,7 @@ from .state import AskRequest, State
 
 
 def agent_router(settings: Settings, state: State) -> APIRouter:
+    """The four routes above, sharing the app's settings and State."""
     router = APIRouter()
 
     @router.get("/models")
@@ -56,6 +57,7 @@ def agent_router(settings: Settings, state: State) -> APIRouter:
                            effort=req.effort)  # None: REASONING_LEVEL from .env
 
         def lines():
+            """Each event as one line of JSON; a failure becomes an "error" event."""
             try:
                 for event in events:
                     yield json.dumps(event) + "\n"

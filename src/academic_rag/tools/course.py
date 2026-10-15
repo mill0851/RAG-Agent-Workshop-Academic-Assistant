@@ -1,5 +1,10 @@
 """The three tools every question gets: search the course by meaning, find exact text,
-and read a whole document. Each returns plain text, written for the model to read."""
+and read a whole document. Each returns plain text, written for the model to read.
+
+    search_course(query)   the same search as the Search page, with the model's own words
+    find_text(text)        every line containing exact text, like Ctrl+F across the course
+    read_document(path)    one whole saved item, from inside the course's folder only
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ FIND_HITS = 30  # matching lines per find_text call
 READ_CHARS = 30_000  # a longer document is cut here
 
 
+# ------------------------------------------------------------ the functions
 def search_course(box: Toolbox, query: str) -> str:
     """Vector search again, with the model's own words (the same search as the first pass)."""
     passages = search(box.store, box.embedder, query, SEARCH_RESULTS, course_id=box.course_id)
@@ -26,6 +32,7 @@ def search_course(box: Toolbox, query: str) -> str:
 
 
 def _squash(text: str) -> str:
+    """Lowercase, with every space removed: what find_text compares."""
     return "".join(text.split()).lower()  # so "HW 3" finds "HW3" and "HW  3" too
 
 
@@ -44,7 +51,8 @@ def find_text(box: Toolbox, text: str) -> str:
                         where = f"{doc.title} ({seg.label})" if seg.label else doc.title
                         hits.append(f"- {where} | file: {doc.rel_path}\n  {line.strip()[:300]}")
                         if len(hits) == FIND_HITS:
-                            return "\n".join(hits) + f"\n(the first {FIND_HITS} matches; look for something more specific)"
+                            return ("\n".join(hits)
+                                    + f"\n(the first {FIND_HITS} matches; look for something more specific)")
     return "\n".join(hits) if hits else f'No course text contains "{text}".'
 
 
@@ -53,18 +61,23 @@ def read_document(box: Toolbox, path: str) -> str:
     target = (box.settings.data_dir / path.strip().lstrip("/\\")).resolve()
     if target.suffix != ".md":  # the original's name ("HW2.pdf") works too
         target = target.with_name(target.name + ".md")
+
+    # The scope is enforced here, in code: never .env, never another course
     if not any(target.is_relative_to(folder.resolve()) for folder in box.folders()):
         return "That is not a document of this course. Use a file path from the sources, the file list or find_text."
     doc = course_files.read_document(target, box.settings.data_dir)
     if doc is None:
         return f"There is no document at {path}."
-    text ="\n\n".join(f"({s.label}) {s.text}" if s.label else s.text for s in doc.segments)
+
+    text = "\n\n".join(f"({s.label}) {s.text}" if s.label else s.text for s in doc.segments)
     if len(text) > READ_CHARS:
         text = text[:READ_CHARS] + f"\n\n[cut at {READ_CHARS} characters; use find_text to reach later parts]"
     return (f"{doc.title} | {doc.course_name} | {doc.source_type}\nfile: {doc.rel_path}\n\n"
             f"{text or '(no text: a scanned PDF or an image)'}")
 
 
+# --------------------------------------------------- what the model is told
+# Each description is what the model reads to decide when to call the tool (tools/README.md)
 SEARCH_COURSE = Tool(
     name="search_course",
     description=(
@@ -81,8 +94,8 @@ FIND_TEXT = Tool(
     name="find_text",
     description=(
         "Find every line of the course material that contains this exact text (capitals and spaces are "
-        "ignored), with its document, page and file path. Use it for exact names, numbers and codes that a search "
-        "by meaning can miss, such as 'Problem 3.5', 'HW 3', 'Section 2.4' or a theorem's name."
+        "ignored), with its document, page and file path. Use it for exact names, numbers and codes that "
+        "a search by meaning can miss, such as 'Problem 3.5', 'HW 3', 'Section 2.4' or a theorem's name."
     ),
     input_schema={"type": "object", "required": ["text"], "properties": {
         "text": {"type": "string", "description": "The exact text to look for"}}},

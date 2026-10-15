@@ -1,0 +1,44 @@
+%% serve/: the front doors. The web pages, the acad command and your own programs reach the same functions.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    subgraph DOORS["Front doors"]
+        CLI["The acad command · cli.py<br/>check, setup, scrape, embed, sync,<br/>courses, search: call the folders directly<br/>serve: starts the API · eval: asks it"]
+        WEB["The web pages · static/<br/>Courses, Search, Ask"]
+        OWN["Your own program<br/>any HTTP client"]
+        AIS["Claude Code · Codex<br/>while they answer a question"]
+    end
+
+    EVAL["eval.py · acad eval<br/>questions with known answers,<br/>asked through POST /ask"]
+
+    subgraph APP["api.py · agent_routes.py · FastAPI on http://127.0.0.1:8000"]
+        R1["Courses and files<br/>GET /courses, /courses/id, /facts, /documents<br/>POST, GET, DELETE /courses/id/files"]
+        R2["POST /search"]
+        R5["POST /scrape, /embed, /sync<br/>GET /jobs/id for progress"]
+        R3["POST /ask<br/>a streamed answer, one JSON line per event"]
+        R4["POST /mcp/session<br/>the tools of the question in progress"]
+        R6["GET /models, /due, /health"]
+    end
+
+    STATE["state.py · State<br/>what the routes share: the embedder,<br/>the index and the AIs, opened on first use"]
+    JOBS["jobs.py · JobManager<br/>one background job at a time:<br/>a second one gets 409"]
+
+    subgraph REST["The other folders"]
+        CF["course_files/"]
+        IDX["index/"]
+        CAN["canvas/"]
+        AG["agent/ · tools/ · llm/"]
+    end
+
+    CLI --> REST
+    CLI --> APP
+    CLI --> EVAL --> R3
+    WEB --> APP
+    OWN --> APP
+    AIS --> R4
+    R1 --> CF
+    R2 --> IDX
+    R5 --> JOBS
+    JOBS --> CAN & IDX
+    R3 --> AG
+    R4 --> AG
+    APP -.- STATE

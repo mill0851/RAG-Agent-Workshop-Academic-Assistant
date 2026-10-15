@@ -1,0 +1,36 @@
+%% index/: building the search index from the course folders, and searching it.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    subgraph BUILD["Build · build.py embed_courses() · acad embed, or Sync"]
+        D["Course folders<br/>data/courses/*/ .md items"]
+        MAN{"Changed since the last embed?<br/>content hash in embed_manifest.json"}
+        KEEP["Left as it is"]
+        RD["read_document()<br/>the header and the labelled segments"]
+        CH["chunk.py · chunk_document()<br/>about 1,000 characters, 150 overlap,<br/>cut at paragraphs, then sentences, then words,<br/>one page at a time"]
+        HEAD["A header line for each chunk<br/>course > module > title (p. 3)"]
+        FIT{"Fits in the model's<br/>256 tokens?"}
+        HALF["Cut in two"]
+    end
+
+    subgraph SHARED["Used by both"]
+        EMB["embed.py · the embedder<br/>all-MiniLM-L6-v2 on your CPU:<br/>text to 384 numbers<br/>HashEmbedder in tests"]
+        STORE[("store.py · Chroma · data/chroma/<br/>each chunk's vector, text and details:<br/>course, type, title, page, path")]
+    end
+
+    subgraph SEARCH["Search · search.py search()"]
+        Q["A question<br/>the Search page, acad search,<br/>search_course, the agent's seed"]
+        NEAR["store.query()<br/>k × 3 nearest chunks by cosine similarity,<br/>within one course if one is chosen"]
+        BOOST["boost_exact_matches()<br/>Task 3: exact codes like HW 2 first"]
+        TOP["The best k, numbered 1, 2, 3 …<br/>Passages: title, page, path, score, text"]
+    end
+
+    D --> MAN
+    MAN -- "no" --> KEEP
+    MAN -- "yes" --> RD --> CH --> HEAD --> FIT
+    FIT -- "no" --> HALF --> FIT
+    FIT -- "yes" --> EMB
+    EMB -- "the chunks' vectors" --> STORE
+    Q --> EMB
+    EMB -- "the question's vector" --> NEAR
+    STORE --> NEAR
+    NEAR --> BOOST --> TOP

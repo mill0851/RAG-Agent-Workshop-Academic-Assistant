@@ -1,5 +1,12 @@
-"""Turn Canvas HTML and downloaded or uploaded files into plain-text Segments,
-keeping where each piece came from (PDF page, slide number)."""
+"""Turn Canvas HTML and downloaded or uploaded files into plain-text Segments, keeping
+where each piece came from (PDF page, slide number).
+
+    html_to_text()   Canvas rich text (pages, assignments, announcements, ...) to text
+    extract_file()   a file's bytes to Segments, by its type: PDF, Word, PowerPoint, text
+    Segment          one piece of text, with its page or slide label
+
+A scanned PDF holds pictures of text with no text layer: it gives no Segments at all.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +20,7 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md", ".html", ".htm", ".csv"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md", ".html", ".htm", ".csv"}  # what can be read
 # Bump when extraction improves so already-saved files get re-extracted on the next scrape.
 EXTRACTOR_VERSION = 2  # 2: control characters removed
 
@@ -28,6 +35,7 @@ class Segment:
     label: str = ""  # e.g. "p. 3" or "slide 5"
 
 
+# --------------------------------------------------------------------- HTML
 def html_to_text(html: str | None) -> str:
     """Convert Canvas rich-content HTML to readable text, keeping headings,
     list structure, and link targets (so 'see the rubric' keeps its URL)."""
@@ -37,6 +45,7 @@ def html_to_text(html: str | None) -> str:
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
+    # Links: "the rubric" becomes "the rubric (https://...)", without a file link's access key
     for a in soup.find_all("a"):
         href = a.get("href", "")
         if "verifier=" in href:  # a Canvas file link's access key: never save it
@@ -44,6 +53,8 @@ def html_to_text(html: str | None) -> str:
         label = a.get_text(" ", strip=True)
         if href and label and href.startswith(("http://", "https://")) and href != label:
             a.replace_with(f"{label} ({href})")
+
+    # Structure: headings as #, list items as -, and a line break after each block
     for level in range(1, 7):
         for h in soup.find_all(f"h{level}"):
             h.insert_before("\n\n" + "#" * level + " ")
@@ -55,6 +66,7 @@ def html_to_text(html: str | None) -> str:
     for tag in soup.find_all(["p", "div", "tr", "table", "blockquote", "pre"]):
         tag.append("\n")
 
+    # Whitespace: single spaces, no spaces around line breaks, at most one blank line in a row
     text = soup.get_text()
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -63,6 +75,7 @@ def html_to_text(html: str | None) -> str:
     return text.strip()
 
 
+# -------------------------------------------------------------------- files
 def extract_file(filename: str, data: bytes) -> list[Segment]:
     """Extract text from a downloaded or uploaded file. Returns [] when unsupported or empty."""
     ext = PurePosixPath(filename.lower()).suffix
@@ -90,12 +103,13 @@ def _clean(text: str) -> str:
 
 
 def _pdf(data: bytes) -> list[Segment]:
+    """One Segment per page with text, labelled "p. 1", "p. 2", ... (pypdf)."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
     if reader.is_encrypted:
         try:
-            reader.decrypt("")
+            reader.decrypt("")  # many "encrypted" PDFs only forbid editing, and open with no password
         except Exception:
             return []
     segments = []
@@ -107,6 +121,8 @@ def _pdf(data: bytes) -> list[Segment]:
 
 
 def _docx(data: bytes) -> list[Segment]:
+    """One unlabelled Segment: the paragraphs, headings as #, then each table row as
+    "cell | cell" (python-docx). Word files have no fixed pages to label."""
     import docx
 
     doc = docx.Document(io.BytesIO(data))
@@ -127,6 +143,8 @@ def _docx(data: bytes) -> list[Segment]:
 
 
 def _pptx(data: bytes) -> list[Segment]:
+    """One Segment per slide with text, labelled "slide 1", "slide 2", ...: its text boxes,
+    its tables, and its speaker notes (python-pptx)."""
     from pptx import Presentation
 
     prs = Presentation(io.BytesIO(data))

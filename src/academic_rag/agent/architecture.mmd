@@ -1,0 +1,35 @@
+%% agent/: one question in, a streamed, cited answer out, in three steps.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    Q["POST /ask · serve/agent_routes.py<br/>the question, the conversation, the course,<br/>the AI and the effort · a Toolbox for this question"]
+    ASK["agent.py · ask()"]
+
+    subgraph SEED["1 · The seed · context.py gather()"]
+        S["search()<br/>the first question + this one,<br/>the 20 best chunks"]
+        STB["small_to_big()<br/>each hit widened to its whole document<br/>or its whole page, until 60,000 characters"]
+        DL["due_soon()<br/>the next 14 days of deadlines,<br/>exact, from facts.json"]
+        FL["course_file_list()<br/>every item of the course,<br/>with the path read_document opens"]
+    end
+
+    subgraph PROMPT["2 · The prompt · prompts.py build_prompt()"]
+        SP["The system prompt<br/>system_prompt.md, notes removed,<br/>the tools, time zone and time filled in<br/>Task 1"]
+        P["The prompt<br/>files, deadlines, numbered sources,<br/>the conversation, the question"]
+    end
+
+    subgraph ANSWER["3 · The answer · llm/"]
+        M["provider.answer()<br/>the model answers, or asks for a tool"]
+        T["Toolbox.call()<br/>search_course, find_text, read_document"]
+    end
+
+    PAGE["The Ask page<br/>one JSON line per event"]
+
+    Q --> ASK
+    ASK --> S --> STB
+    ASK --> DL
+    ASK --> FL
+    STB & DL & FL --> P
+    SP --> M
+    P --> M
+    M <--> T
+    STB -- "sources" --> PAGE
+    M -- "tool, note and text, then trace and done" --> PAGE

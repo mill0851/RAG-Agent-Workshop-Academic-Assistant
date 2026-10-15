@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Tool:
+    """One tool the model can call. The model never sees `run`: only the other three."""
+
     name: str
     description: str
     input_schema: dict

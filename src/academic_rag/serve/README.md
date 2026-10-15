@@ -16,6 +16,22 @@ functions through this folder.
 | [eval.py](eval.py) | `acad eval`: questions with known answers, asked through the running server |
 | [static/](static) | The three web pages: plain HTML, a little JavaScript and a stylesheet, no build step |
 
+## Architecture diagram
+
+[architecture.mmd](architecture.mmd) draws the front doors (the web pages, the `acad` command, your
+own programs, and Claude Code and Codex), the routes they reach, and the folders behind them. It is
+a [Mermaid](https://mermaid.js.org) diagram: plain text that a Mermaid viewer draws as a flowchart.
+To see it:
+
+- **In VS Code:** install a Mermaid extension, such as *Mermaid Chart*, open `architecture.mmd`, and
+  open its preview.
+- **In a browser:** paste the file into the editor at https://mermaid.live.
+- **As an image file:** run this in this folder. The first run downloads a browser to draw with.
+
+  ```bash
+  npx -p @mermaid-js/mermaid-cli mmdc -i architecture.mmd -o architecture.svg
+  ```
+
 ## The idea
 
 **The API is the front door.** Every action in the web pages is one HTTP request, and those same
@@ -57,6 +73,53 @@ and only serves files from inside a course's folder.
 | `POST /mcp/{session}` | the tools of the question in progress, for Claude Code and Codex ([llm/](../llm/README.md)) |
 | `GET /models` · `GET /due?days=7` | the AIs the Ask page can offer; what is due soon |
 | `POST /scrape` · `/embed` · `/sync` | start a background job → `GET /jobs/{id}` for progress |
+
+## Inside one request, step by step
+
+`acad serve` runs `create_app()` in [api.py](api.py), then serves it on `http://127.0.0.1:8000`:
+
+```
+create_app()
+1. State                  the embedder, the index and the AIs, each opened the first time it is needed
+2. the routes             courses, files, search and jobs (api.py); /ask, /mcp, /models, /due (agent_routes.py)
+3. the web pages          static/, mounted last at /, so every API route wins
+```
+
+Four journeys show how a request becomes work:
+
+**A sync.** The Courses page's **Sync with Canvas** sends `POST /sync`. `JobManager.submit()` in
+[jobs.py](jobs.py) takes the one writer slot, starts a background thread, and returns the job's id
+straight away. The thread runs the scraper, then the embed. Meanwhile the page asks `GET /jobs/{id}`
+every 0.7 seconds and shows the message and the count.
+
+**An upload.** `POST /courses/{id}/files` checks the file's type and size, takes the writer slot for
+the length of the request, saves the file and its text ([course_files/](../course_files/README.md)),
+and indexes the course before it answers. That is why an upload is searchable the moment it returns.
+
+**A search.** `POST /search` turns the course name into an id, runs `index.search()`, and returns
+the numbered passages as JSON. No AI is involved.
+
+**A question.** `POST /ask` builds a Toolbox for the question and gives it an MCP address with an
+unguessable token, for Claude Code and Codex. It then streams the events of `agent.ask()` back, one
+JSON line each. When the answer ends, the address closes.
+
+### What each page calls
+
+| Page | Requests |
+|---|---|
+| Courses ([index.html](static/index.html)) | `GET /health`, `/courses`, `/due?days=7`, `/courses/{id}/documents` · `POST /sync`, then `GET /jobs/{id}` · `POST`, `GET` and `DELETE /courses/{id}/files` |
+| Search ([search.html](static/search.html)) | `GET /courses` · `POST /search` |
+| Ask ([ask.html](static/ask.html)) | `GET /courses`, `/models` · `POST /ask` |
+
+### What the status codes mean
+
+| Code | When |
+|---|---|
+| `400` | The request cannot be done: Canvas is not set up in `.env`, the AI cannot be used, a file type is not supported, or a path is outside the course |
+| `404` | No such course, file, job, or question in progress |
+| `409` | Another job is running, or the index was built with another embedder |
+| `413` | The upload is larger than `MAX_UPLOAD_MB` |
+| `422` | The request's JSON does not have the right shape (FastAPI checks it against [state.py](state.py)) |
 
 ## Try it
 

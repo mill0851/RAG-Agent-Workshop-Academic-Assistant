@@ -1,0 +1,43 @@
+%% course_files/: the course folders, the hand-off between the scraper and everything that reads it.
+%% A Mermaid diagram. To view it, see "Architecture diagram" in README.md (this folder).
+flowchart TD
+    subgraph WRITERS["What writes the course folders"]
+        SCR["The Canvas scraper · canvas/<br/>pages, assignments, files …"]
+        UP["Add your own documents<br/>Courses page: POST /courses/id/files"]
+        COPY["Files you copy into<br/>a course's uploads/ folder"]
+    end
+
+    subgraph CF["course_files/"]
+        SU["uploads.py<br/>save_upload(), and sync_uploads_folder()<br/>for files copied in by hand"]
+        EX["extract.py<br/>html_to_text(): Canvas HTML to text<br/>extract_file(): PDF, Word, PowerPoint, text<br/>segments labelled p. 3 or slide 5"]
+        IT["items.py · write_item()<br/>JSON header + title + text,<br/>a marker before each page or slide,<br/>rewritten only if it changed"]
+        FO["folders.py<br/>one folder per course, renamed with it,<br/>safe file names, atomic writes,<br/>prune_tab() for deleted items"]
+    end
+
+    subgraph DISK["data/courses/Course name (id)/ · the contract"]
+        J["course.json · facts.json"]
+        M["One .md item per page, assignment,<br/>announcement, file …"]
+        O["Originals<br/>.pdf .docx .pptx"]
+        U["uploads/<br/>your files and their .md items"]
+    end
+
+    subgraph READERS["What reads them"]
+        RD["items.py<br/>read_document(), iter_documents():<br/>the header and the labelled segments back"]
+        CQ["courses.py<br/>list_courses(), get_course(),<br/>get_facts(), list_documents()"]
+        IDX["index/<br/>embeds every item"]
+        AG["agent/ and tools/<br/>whole pages, find_text, read_document, grades"]
+        API["serve/<br/>the API, the Courses page, acad courses"]
+    end
+
+    SCR -- "HTML and files" --> EX
+    SCR -- "course.json, facts.json" --> FO
+    UP --> SU
+    COPY -- "at the next embed" --> SU
+    SU --> EX
+    EX -- "segments" --> IT
+    IT --> FO
+    FO --> J & M & O & U
+    M & U --> RD
+    J & M --> CQ
+    RD --> IDX & AG
+    CQ --> AG & API

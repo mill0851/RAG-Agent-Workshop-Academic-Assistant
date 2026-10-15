@@ -21,16 +21,19 @@ from .cli import run_cli
 if TYPE_CHECKING:
     from ..tools import Toolbox
 
-PREFIX = "mcp__acad__"
+PREFIX = "mcp__acad__"  # how Claude Code names our tools: mcp__acad__find_text
 
 
 class ClaudeProvider:
+    """Answers with Claude Code, one `claude -p` run per question."""
+
     name = "claude"
 
     def __init__(self, model: str = "") -> None:
-        self.model = model
+        self.model = model  # "": your Claude Code default model
 
     def answer(self, system: str, prompt: str, tools: Toolbox, effort: str = "medium") -> Iterator[dict]:
+        """Run Claude Code once with our tools only, and turn what it prints into events."""
         mcp = {"mcpServers": {"acad": {"type": "http", "url": tools.mcp_url}}}
         args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                 "--tools", "", "--mcp-config", "mcp.json", "--strict-mcp-config", "--allowedTools", "mcp__acad",
@@ -38,6 +41,7 @@ class ClaudeProvider:
                 *(["--model", self.model] if self.model else [])]
         files = {"system.txt": system, "mcp.json": json.dumps(mcp)}
         streamed = False
+
         # ENABLE_TOOL_SEARCH=false: all of our tools are loaded up front, none deferred
         for event in run_cli("claude", args, prompt, files=files, env={"ENABLE_TOOL_SEARCH": "false"}):
             kind = event.get("type")

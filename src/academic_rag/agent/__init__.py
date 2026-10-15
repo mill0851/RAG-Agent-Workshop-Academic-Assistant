@@ -1,6 +1,6 @@
-"""The answering agent behind the Ask page: agent.py runs a turn, context.py gathers the
-seed, prompts.py puts together everything the model is told (its rules are in
-system_prompt.md). See README.md in this folder."""
+"""The answering agent behind the Ask page. Start reading at agent.ask(): it gathers the
+seed (context.py), puts together everything the model is told (prompts.py, with its
+rules in system_prompt.md), and lets the model answer with tools. See README.md here."""
 
 from .agent import ask
 from .context import Context, gather, small_to_big

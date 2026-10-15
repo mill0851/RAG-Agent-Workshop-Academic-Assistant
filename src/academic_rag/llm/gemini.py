@@ -22,17 +22,20 @@ from .base import ProviderError
 if TYPE_CHECKING:
     from ..tools import Toolbox
 
-API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
+API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"  # streamed answers
 MAX_TOOL_ROUNDS = 10  # after this many rounds of tool calls, it must answer with what it has
-LAST_ROUND = "That is all the looking up there is time for. Answer the student now, from what you found."
+LAST_ROUND = "That is all the looking up there is time for. Answer the student now, from what you found."  # round 11
 THINKING = {"low": "low", "medium": "medium", "high": "high"}  # our effort -> Gemini's thinkingLevel
 BUSY = {429, 503}  # rate-limited or overloaded: worth a few more tries
-RETRIES = 4
+RETRIES = 4  # tries after the first, when Google is busy
 SILENCE = 120  # seconds without a byte from Google before giving up on a request
-TRY_ANOTHER = "Google's servers are busy with this model right now: pick another model in the menu, or try again later."
+TRY_ANOTHER = ("Google's servers are busy with this model right now: "  # added to a "busy" error
+               "pick another model in the menu, or try again later.")
 
 
 class GeminiProvider:
+    """Answers with the Gemini API, running the tool loop in our own code."""
+
     name = "gemini"
     default_model = "gemini-3.5-flash-lite"  # the most free-tier quota; pick Flash on the Ask page for more depth
 
@@ -42,6 +45,8 @@ class GeminiProvider:
         self._http = client or httpx.Client(timeout=httpx.Timeout(SILENCE, connect=10.0))
 
     def answer(self, system: str, prompt: str, tools: Toolbox, effort: str = "medium") -> Iterator[dict]:
+        """The agent loop: ask, run the tools Gemini asks for, send their results back, and
+        ask again, until Gemini answers without a tool (or MAX_TOOL_ROUNDS is reached)."""
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
         declarations = [{"name": s["name"], "description": s["description"], "parameters": s["input_schema"]}
                         for s in tools.specs()]
@@ -57,6 +62,7 @@ class GeminiProvider:
             else:
                 body["tools"] = [{"functionDeclarations": declarations}]
 
+            # Gemini's turn: text goes to the page as it arrives; tool requests are kept
             parts = []  # everything Gemini sent this round, kept to send back unchanged
             for part in self._stream(body):
                 parts.append(part)
@@ -86,9 +92,11 @@ class GeminiProvider:
         except httpx.TimeoutException:
             raise ProviderError(f"{self.model} sent nothing for {SILENCE} seconds. {TRY_ANOTHER}") from None
         except httpx.TransportError as exc:
-            raise ProviderError(f"Could not reach Gemini ({type(exc).__name__}): check your internet connection.") from None
+            raise ProviderError(f"Could not reach Gemini ({type(exc).__name__}): "
+                                "check your internet connection.") from None
 
     def _try(self, body: dict) -> Iterator[dict]:
+        """Send one request, waiting and trying again while Google is busy (429, 503)."""
         for attempt in range(RETRIES + 1):
             # the key goes in a header, never in the URL, so it cannot end up in a log or error message
             with self._http.stream("POST", API.format(model=self.model), params={"alt": "sse"}, json=body,
@@ -112,6 +120,7 @@ class GeminiProvider:
 
 
 def _message(resp: httpx.Response) -> str:
+    """The error message in Google's JSON answer, or the start of the answer itself."""
     try:
         return resp.json()["error"]["message"]
     except (ValueError, KeyError, TypeError):
